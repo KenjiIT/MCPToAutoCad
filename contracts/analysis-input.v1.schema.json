@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "Opaque reference owned by the caller; the core never fetches arbitrary files/URLs.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "image",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reference",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reference",
+        "description"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "text": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/Attachment"
+      },
+      "maxItems": 10,
+      "title": "Attachments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "AnalysisInput",
+  "type": "object"
+}

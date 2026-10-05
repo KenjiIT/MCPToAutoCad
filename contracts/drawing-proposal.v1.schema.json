@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "Measurement": {
+      "additionalProperties": false,
+      "properties": {
+        "value_mm": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "title": "Value Mm",
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "user",
+            "image_annotation",
+            "inferred",
+            "proposed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "evidence": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value_mm",
+        "source",
+        "evidence"
+      ],
+      "title": "Measurement",
+      "type": "object"
+    },
+    "Point": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
+    },
+    "Rectangle": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "rectangle",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Point"
+        },
+        "placement_evidence": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Placement Evidence",
+          "type": "string"
+        },
+        "width": {
+          "$ref": "#/$defs/Measurement"
+        },
+        "height": {
+          "$ref": "#/$defs/Measurement"
+        },
+        "layer": {
+          "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+          "title": "Layer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "origin",
+        "placement_evidence",
+        "width",
+        "height",
+        "layer"
+      ],
+      "title": "Rectangle",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "units": {
+      "const": "mm",
+      "title": "Units",
+      "type": "string"
+    },
+    "coordinate_system": {
+      "const": "WCS",
+      "title": "Coordinate System",
+      "type": "string"
+    },
+    "geometry_meaning": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Geometry Meaning",
+      "type": "string"
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/Rectangle"
+      },
+      "maxItems": 100,
+      "title": "Entities",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "unresolved_questions": {
+      "items": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Unresolved Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "summary",
+    "units",
+    "coordinate_system",
+    "geometry_meaning",
+    "entities",
+    "assumptions",
+    "unresolved_questions"
+  ],
+  "title": "DrawingProposal",
+  "type": "object"
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "id": "demo",
+    "kind": "demo",
+    "modalities": ["text"]
+  }
+]

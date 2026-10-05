@@ -1,0 +1,5 @@
+{
+  "adapter": "simulation",
+  "verified": false,
+  "verification_note": "2026-10-05: AutoCAD 2027 running. Read-only COM attach succeeded: version 26.0s (LMS Tech), zero open documents. Autodesk built-in MCP documents Autodesk Assistant only and read/analysis tools for AutoCAD. Drawing access and external write transport are not verified."
+}
