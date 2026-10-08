@@ -1,0 +1,14 @@
+LƯỢT C — CHỈ XUẤT DXF
+
+Tiếp tục bản vẽ phòng hiện tại đã dựng bằng phần 1; không tạo mới hoặc dựng lại tường/cửa. Nếu yêu cầu gửi kèm chỉ định bản vẽ cụ thể, dùng đúng bản vẽ đó. Đọc trạng thái để xác định đích; chỉ hỏi khi thiếu dữ liệu hoặc mâu thuẫn, không hỏi lại tên khi đã cho phép dùng bản vẽ hiện tại.
+Chỉ dùng tool trong catalog, đúng schema. Mỗi phương án tối đa 10 lời gọi. Không dùng placeholder/tham chiếu kết quả nếu client không hỗ trợ; tách phương án đọc và ghi khi cần. Nếu client không giữ lịch sử, gửi kèm kết quả trước. Không chạy lại phần đã hoàn thành. Nếu chỉ lập phương án, không báo đã thực thi.
+
+Chỉ xuất bản vẽ phòng đã hoàn thiện và có kết quả kiểm tra. Nếu còn sai lệch hoặc mục quan trọng chưa xác minh, báo rõ trước khi xuất; không tự sửa hoặc dựng lại.
+Đường dẫn mục tiêu theo cấu hình ALLOWED_PATHS của client UC4NAutoCADMCP đã kiểm tra:
+C:\Users\minhk\orca\projects\MCP Research\UC4NAutoCADMCP\data\drawings\phong_01.dxf
+Nếu dùng cấu hình khác, đối chiếu lại thư mục được phép.
+Chỉ gọi drawing_save_as hoặc tool lưu thực tế khi client/server có cơ chế đã xác minh cho phép đường dẫn và từ chối ghi đè file có sẵn. Không tự thêm overwrite=false nếu schema không hỗ trợ. Kiểm tra tồn tại trước đó hoặc tên ngẫu nhiên không tự bảo đảm chống ghi đè.
+Nếu thiếu cơ chế này, không gọi lưu; giữ bản vẽ hiện có và báo “Chưa xuất DXF vì chưa có cơ chế chống ghi đè được xác minh”.
+Không dùng shell/COM/AutoLISP ngoài MCP thay tool thiếu.
+Chỉ xử lý lượt C. Trả đường dẫn và bằng chứng xuất thành công thực tế; nếu chưa xuất, nêu đúng điều kiện còn thiếu, không báo file đã tồn tại.
+

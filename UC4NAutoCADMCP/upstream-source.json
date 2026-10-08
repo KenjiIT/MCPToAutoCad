@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/U-C4N/Autocad-MCP",
+  "commit": "cdb10638963898b3ea9b10cdd96a2c9bc495f184",
+  "version": "1.6.0",
+  "license": "MIT",
+  "retrieved": "2026-10-06",
+  "local_directory": "mcp_server/upstream",
+  "local_modifications": false
+}

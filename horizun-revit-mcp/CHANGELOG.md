@@ -1,0 +1,2995 @@
+# Changelog
+
+What changed, and — where it matters — what was actually measured rather than
+assumed. Dates are the day the work landed.
+
+## v2.1.6 — 2026-10-03
+
+Patch release over 2.1.5 (tool contract: new optional arguments and reply fields; nothing removed; still 123 tools). It gathers the defects found by two live exercises on copies of the exercise and Autodesk sample models in Revit 2026: the «Comité de obra» run of 2026-10-01 and the «Control 4D/5D con agentes» course rehearsal of 2026-10-03. Each fix was unit-tested offline and replayed live in Revit 2026 on its own branch; the 2023–2027 release gate runs on this tag.
+
+### Course rehearsal «Control 4D/5D con agentes» (2026-10-03)
+
+- **Type bindings are confirmed, not failed.** `horizun_bind_shared_param` with
+  `binding_kind=Type` committed and read back correctly, then answered
+  `not_bound` / `failed` because it called `SetAllowVaryBetweenGroups`, which Revit
+  rejects for a type parameter. Varying between groups is an instance notion: for a
+  Type binding `varies_across_groups.state` is now `not_applicable`, the call is
+  skipped and the outcome is `confirmed`. Instance bindings are unchanged.
+- **Takeoffs too large for the conversation.** `horizun_quantities mode=takeoff`
+  accepts `categories: [...]` (one takeoff over several categories, each element
+  once) and `rows_file: true`, which writes the complete reply - every row,
+  ignoring `top` - to `<data root>/takeoffs/` and returns its path, row count,
+  size and SHA-256. Pass `rows_file.path` as `horizun_budget_compare
+  model_rows_path`. The location is the bridge's own, so no extra permission is
+  needed; a failed write is reported, never thrown.
+- **Element ids across Revit years.** `horizun_execute_python` scripts get
+  `horizun.id_value(id)`, which reads `.Value` (2024+) or `.IntegerValue` (2023);
+  Revit 2026 removed `IntegerValue`. The tool description says so.
+
+### Comité de obra fixes (2026-10-01)
+
+Five defects reported by a live run of the «Comité de obra» exercise in Revit 2026.4 on 2026-10-01. Built for 2023–2027, unit-tested offline, and **measured live the same evening in Revit 2026.4** on fresh copies of the exercise models, through a development session of this build (`0c6a558`, clean tree) with the installed add-in set aside and restored afterwards. Tool contract: new optional arguments on `horizun_query_model` (`source_models`, `link_instance_ids`) and new reply fields; nothing removed.
+
+- **`horizun_export`: the "11 rebar modified" was the bridge's report, not the model.** Measured: Revit's NWC exporter writes while exporting (transaction `Navisworks23`, 12 elements added and 12 modified), yet afterwards `Document.IsModified` is false and the eleven rebar re-read byte-identical — with v2.1.5 and with this build alike — while `DocumentChanged` keeps listing them, because the event that undoes the change does not name them. NWC and IFC now export inside a transaction group rolled back once the file is on disk, and the verdict comes from `Document.IsModified` read before and after: clean→clean states `model_changes` as zero with `proven_unchanged` and the event residue named; clean→dirty says the model was left modified; unsaved work before the export is reported as unverified. Live: NWC `exporter_changes_rolled_back`, `model_changes` 0, no false alarm; IFC complete, document unchanged.
+- **`horizun_clash`:** every full-mode row carries `clash_index` (live: 0…265 over 266 rows). `coverage.pairs_without_solid` names the elements behind `pairs.skipped_no_solids`, which used to sit beside an empty `unresolved_pairs`: live, 248 such pairs came down to 19 walls «Standard» of the MEP model's own architecture, each holding one empty solid.
+- **`horizun_query_model`:** grids and levels carry a `datum` block in host coordinates (grid line, plan angle, length; level elevation), and a grid's `bounding_box` is the box of its curve (live: 49 grids across host and link, none null; grid 1 at X −12 282 mm in the MEP model and −9 202 mm in the structural link — the survey-point offset the run found by hand). `source_models` / `link_instance_ids` read only the named documents (live: 600 of 731 rows from the link alone; a misspelt title refuses with the available sources). `compact` converts measurable numbers to the host's display units and names them in `parameter_units` (live: column volume 0.556639 m³ where it returned 19.66 ft³). **Behaviour change:** callers that converted compact values themselves must stop; `parameter_format=full` still returns `raw`.
+
+Not fixed, observed live once: linking `LNK-Mirador-redes.rvt` (39 MB) into the architecture copy through `horizun_manage_links add` kept Revit busy (about ten cores, no dialog) for 35 minutes until the session's own Revit was terminated. Revit's journal places the stall inside Revit, before the bridge's code after the commit: the linked file loaded, the active perspective view `From Parking Area` began generating its graphics, and the next entry - `FullUpdateGraphicCacheUpdater::updateAll()` for the link, then `Transaction Successful` - never came; in the course run at 17:13 the same link, host and view reached it in 0.8 s. Not reproduced in four further runs (v2.1.5 and this build, perspective view active, with and without the NWC and IFC exports that preceded the stall): the MEP link loaded in 4-6 s every time. Not attributed to the bridge; `horizun_manage_links` and the failure handler are unchanged on this branch and the bridge's timeout reply was the documented one.
+
+## v2.1.5 — 2026-09-30
+
+Patch release over 2.1.4 (tool contract: new optional fields and one new operation; nothing removed; still 123 tools). It fixes the 18 defects found by an end-to-end dry run on 2026-09-30: seven course flows on copies of the Autodesk sample models in Revit 2026. Every item was built and unit-tested offline, then **replayed live in Revit 2026 on 2026-09-30** on fresh copies of the same Autodesk samples, through the installed build. The live replay found three more defects, fixed in this release:
+
+- **`horizun_verify_changes`: the capture view now draws every discipline.** The first fix (frame the camera on the box) did not cure the blank image. The structural sample's 3D view type is Structural, which does not draw non-structural walls. 68 such walls came back blank in top, isometric and front, while five beams of the same model captured fine. The temporary view now applies no template and uses the Coordination discipline. Measured after the fix: top 19,937 content pixels, isometric 70,009.
+- **`horizun_verify_changes`: the crop keeps Revit's depth.** Writing the framed box's depth into a 3D view's crop Z was part of the first fix; it is dropped. The rectangle is still fitted to the box.
+- **`horizun_model_scan`: placed schedules no longer count as off-sheet.** `ViewSheet.GetAllPlacedViews()` does not return schedules, so the scan listed placed schedules as off-sheet. The new reconciliation with `horizun_audit_model` exposed it (38 against 35). Schedule placement now comes from `ScheduleSheetInstance`, and the two tools reconcile exactly (34 ↔ 28).
+
+Measured live, per defect:
+
+| # | Result in Revit 2026 |
+|---|---|
+| 1 | units millimeter, link declares inch, DWG header millimetre: `units_check.verdict: agrees`, applied millimetre by `measured_scale` (0.977 mm per drawing unit) |
+| 2 | walls-only plan `applicable` on `link_geometry_only`; `apply_cad_plan` by `plan_id` created 68 walls, `verified_applied` |
+| 3 | all 68 walls at Z = 30,000 mm (drawn Z 0) |
+| 4 | `M_Concrete-Round-Column: 300mm` refused `column_top_unstated` without `top_level`, `usable_with_warnings` with it; 55 columns planned with `top_level_id` |
+| 5 | 10 body rows grouped by Type, Length/Area/Volume totalled (119 in the dry run) |
+| 6 | crop active and visible on a placed sheet |
+| 7 | the capture is no longer blank (see above) |
+| 8 | `cad_extract` with `view_id` answers |
+| 9 | 397 beams on 02/03/Roof through `INSTANCE_REFERENCE_LEVEL_PARAM` |
+| 10 | `HOST_AREA_COMPUTED` resolves; Type Name gives the 8 wall types with the dry run's totals |
+| 11 | sums carry `sum_unit`, metres and the display unit |
+| 12 | workbook created; the backup lands in `%USERPROFILE%\.horizun\backups\excel` |
+| 13 | `already_open_activated` without `allow_upgrade` on a 2023 header |
+| 14 | `horizun_health`: `suspected_instructions: 0` |
+| 15 | Project Information write: no `vary_between_groups_error` |
+| 16 | 34 ↔ 28 reconcile in both directions |
+| 17 | `plan_from_cad` 183 kB → 25 kB; `query_cad` profile 83 kB → 33 kB; `create_elements` summary 4,966 B for 20 walls |
+| 18 | `new_project` from Revit's default template, created, re-read and activated |
+
+Still open:
+- The clash summary's size is measured offline only: the live model had no clashes.
+- A `manage_views` batch that places a view and then crops it fails `place_view`'s centre check and rolls back whole. Cropping first works.
+- The `instance` block of a `manage_cad_links add` reply shows `applied_units: null`. `units_check` and every later read carry the applied unit.
+
+### DWG to model
+
+- **`horizun_apply_cad_plan` could never apply a walls-only DWG plan on a normal machine.** The source-set identity behind `sources_match_the_link` is written only by headless AutoCAD (accoreconsole), and only for `blocks`, `solid_hatch_layers` or `section` rules. The dry run's 75 walls were refused `coherence_unknown`, and neither `dwg_path` nor `horizun_cad_extract` could clear it. A plan whose requirement set reads nothing from the file is now judged on the link and the host DWG's hash. The link must have been loaded by this bridge and its geometry must be unchanged. New state `link_geometry_only`, `basis: link_geometry_and_host_file`, `references_checked: false`. A revised host is `revisions_not_aligned`. The strict refusal names what writes the set. The plan's binding records `link_geometry_fingerprint`, so a reload between plan and apply counts as drift. 12 Core tests; live probe `cad-plan-storey`.
+- **DWG plans put walls on their level, not on the drawing's Z.** On a level at +30,000 mm, the plan emitted Z = 0. `create_elements` derives the base offset from Z, so the walls would have been built 30 m low and verified there. Walls, floors, ceilings, roofs and absolute-mode families now stand at the resolved level's elevation plus the rule's offset (`storey_placement` in the reply). Creates from `plan_cad_update` follow the same path. 9 Core tests, including +30,000 mm = 98.4252 ft. Still open: flat MEP runs without `offset_mm`, room separators and `plan_cad_update`'s host search still read the drawing's Z.
+- **`structural_column` rules can declare `top_level`.** `catalog_check_only` refused `M_Concrete-Round-Column` (TwoLevelsBased) as "cannot be placed without a host", with no way to state its top. The plan now resolves `top_level` to `top_level_id` and refuses a top at or below the base. Without it, the rule is refused as `column_top_unstated`, which names the field. A top on a one-level family is refused rather than ignored. Columns read from closed loops were also placed at the ring's first corner, 150 mm off for a 300 mm column; they now stand at its centre. 8 Core tests.
+- **`horizun_manage_cad_links add` checks the unit by the linked geometry's scale instead of stamping `verified_applied` unchecked.** `units: millimeter` gave a link declaring `inch` (`IMPORT_DISPLAY_UNITS` ordinal 2), and the reply said verified because the stamp was a literal. That declaration cannot settle the question: it does not follow a forced unit (verify-dwg-cadlink W2), and on the dry run's drawing it did not match the DWG header either (INSUNITS 4, millimetres, extents 82.4 × 66.4 m). When a unit is asked for, `add` compares the placed geometry's XY diagonal with the drawing's own `$EXTMIN`/`$EXTMAX`, read by the headless reader: a cached extraction or a new header-only read, 5.1 s on that drawing. The new `units_check.verdict` is one of:
+  - `agrees` or `applied_header_differs`: verified;
+  - `not_applied`: a reused link type kept the header unit (W3); `units_not_applied`, partial;
+  - `unconfirmable`: no reader, degenerate extents, or a scale that matches neither; uncertain, never partial.
+
+  `units_check.applied` is kept in the machine's link load record and published per instance as `applied_units` / `applied_units_route`. A contradiction between the declaration and the drawing's INSUNITS is reported in `declared_contradicts_drawing`. 29 Core test cases.
+- **The DWG unit gate compares the unit Revit applied.** In the dry run, a link forced to millimetre that still declared inch was refused a millimetre set. `plan_from_cad`, `plan_cad_update` and `audit_cad_model` now use `applied_units` when present, fall back to the declared unit, and name the basis in `source.units_checked`. 5 Core tests.
+- **`horizun_cad_extract` with `view_id` no longer throws `DetailLevel is already set`.** The CAD harvest set `Options.DetailLevel` and then `Options.View`, and Revit accepts only one of the two. It now sets one or the other (`GeometryOptionsRules`). A source scan over all 34 `new Options` in the add-in found no other site that set both, and the scan stays as a test.
+- Live probe `cad-links-units-extract` (6 cases) covers the unit verdicts, the view-scoped extract and the compact profile. On a machine without AutoCAD the unit cases report `unverified`.
+
+### Documents, schedules and views
+
+- **`horizun_create_schedule` no longer groups a non-itemized schedule by its quantities.** Walls with Type/Count/Length/Area/Volume were sorted and grouped by every non-Count field, which gave 119 rows instead of 8. Fields are now classified from what Revit reports (field type, spec, `IsMeasurableSpec`, `CanTotal`). Identity fields are sorted and grouped in request order. Quantity fields that Revit can total, except Count, get Totals. A new optional `group_by` is honoured exactly; a name that is not one of the requested fields is refused in the rehearsal. The postcondition re-reads `sort_group` and `totals`, and the reply's `grouping` block names each field's role. 11 Core tests.
+- **`horizun_manage_views` `set_crop` verifies the crop that governs the view, not just the stored box.** It answered `verified: true` while the placed view still looked uncropped. `CropBoxActive` was already set; the verdict re-read only the CropBox, which Revit stores whether or not it governs the view. The verdict now needs `CropBoxActive`, the Crop View parameter (read independently), the CropBox and the drawn crop shape. A view template that controls the crop, a scope box that drives it, or a sketched crop is refused by name before any write. The row's `crop` block gives the crop's model corners and each viewport's sheet size against the crop. A larger viewport is the named finding `viewport_larger_than_crop`, which points at `set_annotation_crop`. Which of these caused the dry-run case is not yet measured. 11 Core tests.
+- **`horizun_verify_changes` frames the camera on the elements and no longer calls a blank image captured.** `orientation=top` on 75 walls at +30,000 mm returned a blank 7.7 KB PNG with `captured: true`. The view kept the default isometric eye and crop depth, both sized for the model as it was. The eye now stands outside the elements' box for every orientation, and the crop depth covers the box. The exported PNG is measured: fewer than max(25 px, 0.05 %) pixels that differ from the background gives `captured: false` with `finding: "blank_image"`. 13 Core tests.
+- **`horizun_document_session` `operation: "new_project"`** (improvement). It creates a blank project from `template_path`, or from Revit's `DefaultProjectTemplate` (named in `template_source`), at a `save_as_path` .rvt that must not exist; it never overwrites. It rehearses by default, with a token bound to the template's path, size and write time and to the target. The apply runs `NewProjectDocument` + `SaveAs`, re-reads the file and the document path, removes its own output on a mismatch, and reports `activated`. 25 tests.
+- **`horizun_open_document` activates an already-open document without `allow_upgrade`.** A 2023 model upgraded in memory on 2026 and not saved still has a 2023 header on disk, so activating it again demanded `allow_upgrade`. A path already open in the session, with no detach or audit, is now an activation: `version_guard: 'not_applicable_already_open'`. The wrong-bridge and central-model checks still apply. 6 Core tests.
+- Live probes `docs-dry-run` (top capture at +30 m, the dry run's wall schedule, set_crop on a placed view) and `document-session-new-project` (also covers the activation path).
+
+### Reading the model
+
+- **`horizun_query_model` resolves levels from where each category keeps them.** `group_by: level` put all 397 Structural Framing, 91 Rooms, 6 Roofs and 5 Stairs under "(no level)". The level read was a `??` chain that stopped at the first level parameter that *existed*, even when it held no level. The level now comes from an ordered list of sources (`LevelResolutionRules`): `Element.LevelId` first, then base and reference parameters including `INSTANCE_REFERENCE_LEVEL_PARAM`, `ROOF_BASE_LEVEL_PARAM`, `STAIRS_BASE_LEVEL_PARAM` and `ROOM_LEVEL_ID`, then a level host, and schedule levels last. A source counts only when it names a real Level. Summaries add `by_level_source`.
+- **`horizun_quantities` uses one parameter resolver with `query_model`.** `mode=takeoff` answered "absent" for `HOST_AREA_COMPUTED`, and `classification_parameter: "Type Name"` read "(empty)" on every instance. Both tools now accept BuiltInParameter tokens, GUIDs and names, reading the instance and then the type, with Type Name / Family Name read on the type first. An ambiguous display name is reported as unreadable instead of silently taking the first match.
+- **`horizun_query_model` sums name their unit.** `sum_parameters` returned Revit internal units with nothing saying so, so a 38.66 m² room read 416.16. `sum` is unchanged. Each sum adds `sum_unit`, `spec`, `quantity`, `value` + `unit` in m / m2 / m3, and the document's display unit when it can be read. Non-measurable specs are labelled unitless; mixed specs are never given a converted value.
+- **`horizun_audit_model` / `horizun_model_scan` view counts say what they count.** The two tools reported 28/36 views off sheets and 34/42 views without a template, with no explanation; schedules account for the difference. No count changed. Each finding adds its scope, a split by view type, what was left out, and the arithmetic that reconciles the two numbers.
+- 23 Core tests; four read-tier probes in `scripts/verify-live.ps1`.
+
+### Reply size
+
+- **Opt-in compact replies for the four tools that overflowed the client.** In the dry run `plan_from_cad` answered 232 kB, `create_elements` of 75 walls 262–276 kB, `query_cad` profile 78 kB and `clash` 58 kB, and the client cut each one to a file. `full` stays the default everywhere. Measured offline on synthetic replies:
+
+  | Tool | New option | What it keeps | Full → reduced |
+  |---|---|---|---|
+  | `horizun_plan_from_cad` | `response_mode: "summary"` | counts, coverage, warnings, coherence, `apply_binding` | 39.8 kB → 5.7 kB |
+  | `horizun_create_elements` | `response_mode: "summary"` | every failed or flagged row in full; clean rows as counts and ids | 198,370 B → 1,444 B |
+  | `horizun_clash` | `response_mode: "summary"` | totals by category pair and the 10 largest clashes | 51,545 B → 5,041 B |
+  | `horizun_query_cad` `mode=profile` | `response_mode: "compact"` | every number; drops the prose | 63 kB → 13 kB |
+
+  - Every DWG plan is now stored for 14 days under `plan_id`, which `horizun_apply_cad_plan` accepts in place of `apply_binding`/`actions`.
+  - Profile mode now honours the `layer` glob.
+  - Omissions are named in `response_omissions` / `omitted`.
+
+### Smaller fixes
+
+- **`horizun_excel_write_rows` can start a workbook, and its backup no longer lands in the user's folder.** Against a missing path it answered `Workbook not found`. `create_if_missing: true` creates an .xlsx, never replaces an existing file, and goes through the same lock and the same in-memory and on-disk read-back. The per-append backup now lives in `%USERPROFILE%\.horizun\backups\excel\` and is named in `backup_path`. A new workbook takes no backup. 10 server tests.
+- **`content_safety` no longer flags the bridge's own sentences.** `horizun_health`'s `recent_horizun_writes.note` and `horizun_audit_model`'s `finding_set_means` name Horizun tools and were reported as suspected instructions. Detection now skips exactly those (tool, path) pairs; the same sentence in an element name or comment is still flagged. 6 tests.
+- **`horizun_write_params_verified` stops reporting `vary_between_groups_error` on writes that succeeded.** Filling Project Information showed "does not support allowVaryBetweenGroups" on every row. `SetAllowVaryBetweenGroups` is now attempted only for instance-bound project/shared parameters on instances (`VaryBetweenGroupsRules`). 7 Core tests.
+
+tools/list grows by the new optional fields and the `new_project` operation; see `tests/Horizun.Server.Tests/tools-list-ledger.json`.
+
+## v2.1.4 — 2026-09-27
+
+v2.1.3 was tagged but not released. Its Revit 2024 and 2025 live gates came back 584 passed, 0 failed, 0 unverified, with only the approved exemption not covered - and the gate script then checked the report a second time for not_covered = 0 and failed it. The named exemptions now live in one file, `scripts/release-gate-exemptions.json`, read by verify-live, the gate script, the stable-evidence job and the evidence tools; a report cannot widen it (name, reason and year must all match). Its 2023 gate had two more gaps: the panel-schedule probe now always stages its own panelboard from the year's template (every 2023 panel already had a schedule), and design options in Revit 2023 - which the API cannot create and whose only Autodesk sample has none - joins the list, approved by the project owner.
+
+### From the v2.1.3 tag (not released)
+
+v2.1.0, v2.1.1 and v2.1.2 were tagged but never released; the product is the same in all four. v2.1.2 passed its builds, packaging and installation, and its Revit 2024 and 2025 release gates found 18 failures each - all in the live probes, none in the product: the release model is a workshared central, and probes that opened another model could not give it back (open_document refuses a central), so a dozen later probes refused the active-document check. Fixed and re-run locally on the release runner's exact fixtures (Revit 2024: 755 passed, 0 failed, 0 unverified):
+
+- The workshared-fixture helper gives the release central back through document_session; sync-central, worksets and spatial-links provoke their refusals on scratch copies of a plain model; the sync detached-copy check uses the probe's own closed central.
+- The gate carries the owner's ACC sign-in into its isolated data folder and returns a refreshed token; one ACC issue is created under a fixed key, and later runs prove the keyed create does not duplicate it.
+- The curtain mullion type comes from the year's Autodesk template; the point cloud cleanup deletes the instance only (Revit's API refuses to delete a PointCloudType, measured); the owner-off sync refusal is proved in the run's isolated settings copy only.
+- **Named release-gate exemption** (docs/RELEASE-POLICY.md, approved by the project owner): the floor-on-a-scan case may stay not covered while the runner has only a sparse scan. It is still reported and listed in each report's `release_gate_exemptions`.
+- README.md and README.es.md list the 30 improvements of 2.1 one by one.
+
+v2.1.0 and v2.1.1 were tagged but never released. v2.1.0's hosted whitespace gate stopped it before any package was built (trailing whitespace in the vendored IDS schema, one example and two tests; the schema is kept byte for byte and exempted from the gate). v2.1.1 passed every Revit add-in build for 2023-2027, then its hosted `package` job found no .NET SDK 10.0.400: that job and `public-integrity` relied on whatever SDK the hosted image carried, and `global.json` pins 10.0.400 with roll-forward disabled. Both now install it. The product is the same in all three.
+
+Minor release over 2.0.5 (tool contract: new tools, operations and optional fields; nothing removed). Live matrix at the release candidate: Revit 2023, 2024, 2026 and 2027 with 0 failures; 2025 is measured by the release gate.
+
+### Coordination loop, verification coverage, fixtures
+
+- **`horizun_export` `format: "cobie"`: a COBie 2.4 workbook of the active model** (still 123 tools; tools/list +2,510 B). Facility, Floor, Space, Zone, Type, Component and System from a `cobie` mapping that is the caller's data (`created_by` is never taken from the machine; a `project-context.json` can fill project name, site, stage and the classification parameter). A required cell with no source stays empty and is a finding, never "n/a"; duplicate names and broken references are findings too, and `deliverable_ready` stays false while one remains - the workbook is still written. Components are placed in rooms by the product's existing rules (To/From room for doors and windows, `RoomMembershipReader` otherwise). Written by a new dependency-free `.xlsx` writer in Core and re-read from disk cell by cell before `files_verified`. Built and tested offline only (39 Core tests, the `cobie-workbook` probe against fakes; a sample workbook opened in Excel and LibreOffice). **Measured live in Revit 2026 (2026-09-27): 6/6** - an own room, walls and door staged, the seven sheets planned, the workbook written and re-read from disk cell for cell, the own room a Space row and the own door a Component in it, `created_by` on every row; a missing Category is a blocking finding and `deliverable_ready` stays false. The probe had sent a `phase_id` beside a point room, which `create_elements` refuses (it would be ignored): a point room takes the last phase, which the export names. Details: [TOOLS-EXTENDED.md](docs/TOOLS-EXTENDED.md#horizun_export--cobie-workbook-format-cobie).
+- **Four-year matrix at 2628cf8 (2026-09-27; 2023, 2024, 2026, 2027 - 2025 is somebody's open session): 547-551 cases pass per year, 2-3 fail, 24-28 not covered.** Every failure was fixed and re-measured live:
+  - `horizun_fix_planimetry`'s harness check still counted 9 operations after `set_view_display` made them 10.
+  - `horizun_verify_changes` over the session: past the cap it kept the OLDEST writes, so the newest - the one just made - could go unchecked. The union is now newest-first (`SessionScopeRules.Union`) and the truncation note says the oldest are the ones not checked.
+  - gbXML failed in 2023 and 2024 with "no main EnergyAnalysisDetailModel ... not compatible with the option set". Measured in Revit 2024 on the SpatialElement/Final model that `Create` had just made main: with the energy settings on RoomsOrSpaces, `ExportEnergyModelType.SpatialElement` (the documented default before 2026) is refused, while `AnalysisMode` (2026's default) writes the space with its constructions; with the settings on building elements, SpatialElement is accepted but writes no construction. 2023-2025 now export `AnalysisMode`: export-formats 10/10 live in 2024 (1 space, 2 constructions) and in 2023 (88 spaces, 6 constructions), energy 6/6 in 2023.
+  - Probes: two modules shared the idempotency-key prefix `-rm-` (a Core test now refuses any shared prefix); the curtain ceiling is not covered, never failed, when the own layer types could not be staged; and the curtain probe missed a type the template copy had just brought in 2023 because its type query read one 500-row page of 1459 mullions, and the German-template fixture names the system family `Rechteckiger Pfosten`. The query now pages, and a type name alone is taken only when exactly one type has it. framing-curtain 11/11 live in 2023.
+- **Research roadmap, batch 1 - new operations and modes on existing tools (still 123 tools; dispatched operations 435 -> 456; built, reviewed by two adversarial lenses and fixed; measured live in Revit 2026).** Each reports what it could not read by name and never counts it as zero or as a pass.
+  - `horizun_quantities` **`room_finishes`**: gross wall, floor and ceiling faces per room or space (phase required), by bounding type, material (the paint when painted) and a caller code; openings facing the room are a separate deduction column, listed one by one with their size basis - never a silent net. **`carbon`**: volume, area and mass per material times the caller's factor table (kgCO2e per m3 or kg); nothing compiled in. Takeoff **`group_by='room'`** and `horizun_query_model` **`include_room`** place elements in rooms for a phase, linked ones through their transform; an element in two rooms is `spans_rooms`.
+  - `horizun_fix_planimetry` **`set_view_display`** fixes detail level or discipline citing an audit finding (refused when a template controls it); `horizun_manage_views` **`renumber_sheets`** (collisions checked first, swaps resolved in one transaction), **`create_perspective`** (eye, target, up, or a fan of azimuths) and **`set_sun_study`**; `horizun_write_params_verified` gains a **`sequence`** generator (by level, x, y or room; prefix, start, step, restart per level) shown in the rehearsal and bound by the token.
+  - `horizun_plan_mep` **`system_analysis`** reads the critical path, pressure loss, flow and velocity Revit computed (a system Revit does not call well connected is not judged); `horizun_query_structure` **`analytical`** (physical/analytical association, releases, node gaps) and **`loads`**.
+  - `horizun_export` **`dwg`** for many views or sheets in one job, **`rfa`** (loaded families to files), **`gbxml`** (re-read space/zone counts; refuses "no spaces"), **`dgn`** and **`dwfx`**; `horizun_code_check` **`energy_readiness`** (energy model built at tier Final inside a rolled-back transaction) and **`headroom`** (vertical rays; a ray that finds nothing is "not measured").
+  - `horizun_create_elements` **`placement='all_enclosed'`** for rooms and spaces (one per empty circuit, `min_area` skips shafts) and **`kind=toposolid`** (2024+; refused by name in 2023); `horizun_federation_check` **`levels_match`**.
+  - `horizun_document_session` **`sync_with_central`**: off by default and enabled only by the machine owner in Revit (Advanced options); the preview is a labelled estimate bound by the token; ownership re-read by UniqueId against the relinquish choice after the sync; detached copies and non-workshared documents refused.
+  - `horizun_manage_links` **`acquire_coordinates`** (real rollback rehearsal, re-read of the active location), **`add kind=point_cloud`**, **`scan_deviation`** (coverage measured by where the points fall; under half coverage is "not measured", never "ok") and **`add kind=ifc`**.
+  - `horizun_transform_elements` **`edit_sketch`** for floors, ceilings and openings: the element keeps its id and hosted data; `horizun_budget_compare` **`export_bc3`** (FIEBDC-3 from the takeoff and the caller's prices; a code without a price is refused, never invented).
+  - **Measured live in Revit 2026 on 2026-09-27** (own development session, disposable model, every probe staging its own elements): 99 cases pass across the 15 probe modules of the batch, none fails, and 7 are not covered, each for a named reason: three need a point-cloud fixture (.rcp/.rcs) this machine does not have, three need the machine owner to switch on Synchronize with central (a probe never does), and one is by design (a circuit bounded by a link is declared, not proven). What the probes found in the product, now fixed:
+    - `set_view_display` re-read the property it was not asked to set without declaring it, so its verdict could never be `all_verified`.
+    - `all_enclosed` spaces: Revit's `NewSpaces2` over the plan returns redundant zero-area spaces; they are now named `skipped_zero_area` and never counted as created.
+    - DGN export produced nothing without a seed: `DGNExportOptions.SeedName` now comes from Revit's own `ACADInterop` seeds (metric or imperial, 2D or 3D), and a missing seed is refused in the rehearsal.
+    - A beam created on a level was re-hosted by Revit on the nearest level below; the requested reference level is set back and regenerated.
+    - Links, point clouds and IFC links given a path with forward slashes loaded, but `GetLinkDocument()` returned null; paths are normalized before Revit sees them (`LinkPathRules`). `horizun_document_session open` and `model_diff` compared the requested and the opened path as raw strings and refused a local file they had just opened and activated; the comparison ignores separators and case now (`DocIdentity.SamePath`).
+    - `query_structure mode=loads` grouped a load with no load case under an empty key (`""`), which is valid JSON that PowerShell refuses whole. Such a load now reads `load_case.assigned: false`, with its nature and category null by design (not unread), and is counted under `"(no load case)"`.
+    - The open guard explains a file that reads as a central but records another file as its central. It is either a copy of that central or a local made by `CreateNewLocal` and never opened: Revit reports both as `IsCentral=true, IsLocal=false`, and only opening and saving the local changes that.
+    - A gbXML read-back also counts `Construction` elements (counted, not judged).
+  - Probes: they now stage what they measure instead of relying on the fixture:
+    - an own room and MEP space for energy and gbXML (HZ_WRITE exports energy by spaces);
+    - an own sheet with a placed view for DWG linked, DWG bound and DGN;
+    - pipes hung under a floor and run inside one for headroom;
+    - an analytical member with its own load case and a 10 kN load for the analytical and loads reads (staged by Python, since no typed tool creates them);
+    - a wall inside the link source copy for the clash-against-link case;
+    - a door family brought by name for the `.rfa` export;
+    - a first open and save of the scratch local before the sync.
+
+    Energy and gbXML also check that the main energy model is unchanged afterwards.
+  - Harness: `hz-call` read a reply that PowerShell's `ConvertFrom-Json` refuses as "not JSON" and waited out its 15-minute timeout on an answer it already had. It now reads such a reply as a hashtable, renames the offending keys and says so in `reply_parse_note`.
+- **New tool `horizun_framing`: light-gauge wall framing and suspended-ceiling framing from a detail spec** (123 tools; live in Revit 2026: 10/10 - a wall with a door and a window, 30 members at 0 mm; a suspended ceiling, 29 members with 12 hangers on the slab; a 45-degree wall framed with columns and beams; idempotent apply, read and remove).
+  - Measured while making it pass: Revit hosts a line on a FACE of an element, so a line-based family refused every created reference plane or sketch plane ("does not coincide with the input face", 0.000 mm off the plane). Line-based members are now horizontal only, placed on their level with the height as an offset, and a vertical line-based member (stud, king, jack, cripple, hanger) is refused by name - those need a Structural Columns type. The re-read adds that level offset: a line-based family's location curve stays on its level, like a wall's location line. A column placed on a vertical line reports a location curve, its real axis.
+  - The MCP client reads a wall-type or ceiling detail (image or DWG) into a typed spec with the prompt `framing-from-detail`; the person confirms it; the tool builds it. Families, sizes and spacings are the caller's data - nothing organisation-specific is compiled in.
+  - `wall`: studs, bottom/top tracks, kings, jacks, headers, sills, cripples and blocking inside one layer of each straight Basic wall; hosted doors, windows and wall openings are read from the wall and no stud crosses one. `ceiling`: mains, furring, perimeter track and hangers ray-cast to the structure above, re-cast after the commit (`hanger_reaches_support` within 1 mm). `read` and `remove` find the members by a marker that records each member's own UniqueId, so a copied member is never taken for the original's.
+  - Every write rehearses first; the token binds the resolved plan (every member's role, type and both endpoints) and, for `remove`, the cascade Revit deletes with the members.
+  - **The curtain method** (`spec.wall.method` / `spec.ceiling.method = "curtain"`), for teams that model framing with curtain elements instead of one family per member. The wall core becomes Curtain Wall pieces whose type does the layout (vertical grid at the stud spacing, stud mullions, border tracks, infill panel), split around every opening, with header and sill curtain walls. The ceiling becomes flat Sloped Glazing layers plus hanger curtain walls on the caller's own types (type ids only; nothing compiled in).
+    - A wall with several openings keeps its original wall full length as a placeholder (`multi_opening = "keep_carrier"`, the default), so every door keeps its id, tags and data; the pieces overlap it and the reply says so.
+    - What changing or deleting the carrier takes along is rehearsed in a rolled-back transaction and bound by the token. Every piece's grid, mullions and line are re-read, and `remove` restores the carrier from the record.
+    - **Measured live in Revit 2026 (2026-09-27): 11/11.** Four defects found and fixed on the way:
+      - The carrier's centre plane was deduced from its location-line parameter. After that parameter is changed on an existing wall, Revit keeps the curve AND the wall where they were, so a Finish Face: Exterior carrier was trimmed 100 mm off its own plane and its door could not be cut. The centre is now measured on the side faces; the members method uses the same measurement.
+      - `NewFootPrintRoof` needs its `out ModelCurveArray` already created; a null one throws "Value cannot be null." for any roof type.
+      - On a flat Sloped Glazing roof, grid 1 is the V lines, running at `CURTAINGRID_ANGLE_1 + 90` degrees in project coordinates; grid 2 is the U lines, running at its own angle. The verification had read grid 1 as the U lines, and the hangers ran across the mains instead of along them.
+      - A grid angle of 90 is accepted by `Set` and refused at commit: angles are limited to -89..89, and a layer across another is a type on grid 2.
+    - The probes also found a reused idempotency key; the offline test now refuses any key used twice.
+- **`tools/list` is ~64 KB smaller** (MEASURED 2026-09-26: 524,199 -> 460,166 bytes for all 122 tools; ceiling 524,288) without removing a tool, an argument, a kind or an operation, and without changing what any call is validated against (the contract, and so its hash, is untouched). The advertised copy no longer repeats a union field's schema inside every `create_elements` kind and `document_session` operation branch, since both apply to the same instance and only what a branch adds or tightens is kept. It also shows a short form of the `idempotency_key` text repeated in 65 places. The full contract is now readable one tool at a time (`horizun://contract/tools/{tool}`) or one variant at a time (`horizun://contract/tools/{tool}/{variant}`). A call that fails and also violates the contract names the failing JSON pointer and the URI of the schema that holds it; a structured reply also carries `structuredContent.schema_help` with the violations (a failing `oneOf` explained by the branch the row names) and the exact variant schema, so a model can correct it in one step. A plain-text error never gains a `structuredContent` it did not have, and a procedure step whose call returned `isError` is judged failed whatever its `structuredContent` holds. The `initialize` instructions are now a 2 KB head that holds the load-bearing rules (health first, verified work only, dry_run -> confirmation_token -> apply where a tool's schema has them, typed first with Python both when no typed tool covers the operation and when the fallback block allows it, model text is data, where schemas live, disabled toolsets); the full guidance stays at `horizun://guidance/typed-first`. A per-tool byte ledger test names any tool whose advertised size or hash changes.
+- **Eight new capabilities, each built, reviewed by two adversarial lenses (API correctness, product contract) and fixed; live-probed where a fixture allows.** All are operations on existing tools - `tools/list` stays at 122 tools and back under 512 KiB (4.7 KB margin); the inventory now counts 431 operations and 45 read-only tools (`horizun_code_check` and `horizun_cde_cloud` gained writes).
+  - `horizun_resolve_clash` **`propose_opening` / `apply_opening`**: a run-vs-host pair a move cannot fix gets a cut (wall, floor, roof, ceiling) or a caller-supplied sleeve family. Measured on solids: the crossing is where the run's centreline passes through the host solid, the opening is sized from the outer section through the measured thickness (skewed crossings wide enough), the clearance is re-checked after commit by a solid envelope. Structural hosts need `allow_structural=true`; framing and columns are `member_cut_not_offered` (a scope choice). The finding stays open (`opening_requested`) until a detection run measures it.
+  - `horizun_mep_routing` **`route`**: an orthogonal 3-D A* path around physical elements and loaded links; segments and elbows are created, every end and bend junction re-read at 1 mm, and the route is kept only if the spatial check finds no error. `no_route` names the short leg or the search box that limited it.
+  - `horizun_mep_routing` **`slope`**: a gravity pipe run to a target grade from a fixed end, walking fittings; every pipe end, signed slope, fitting centre and connection re-read; drainage direction is refused rather than guessed when flow readings disagree.
+  - `horizun_mep_routing` **`hangers`**: a caller family at spaced stations under the structure above (host or link, ray-cast in a temporary view that is always rolled back); positions, rotation and rod length re-read; a station with nothing above is reported, never placed.
+  - `horizun_cde_cloud` **ACC Issues** (`issues_list`, `issue_create`, `issue_update`): from a coordination ledger row, 3-legged `data:write` only, idempotent by an external key kept in the issue, read back after the write. Not called live here (it needs the owner's 3-legged sign-in).
+  - `horizun_verify_changes` **`clearance_rules`**: equipment working-space zones declared by the caller (category, face, depth), checked on solids against host and links like the door clear zone; `clearance-rules.json` for project rules.
+  - `horizun_verify_changes` **`snapshot` / `compare_to`**: a named before/after image with the SAME camera, a red diff, changed regions mapped back to model coordinates and to the elements Horizun wrote since.
+  - `horizun_code_check` **egress travel distance** with Revit's PathOfTravel: reported as a lower bound; a pass needs a proven ceiling (convex rooms), otherwise `not_decidable` with the reason.
+- **`horizun_split_multilayer_walls` converts walls that host doors, windows and nested components, measured live in Revit 2026 (5/5 on the year's own template types).**
+  - The carrier keeps its identity and its inserts: values Revit derives from the host (host id, sill/head, levels, phases, type) may follow the host and are no longer read as a failed copy; a nested shared component is verified through its owner and symbol.
+  - A door's frame or trim that reaches a layer wall lining its host is now a spatial **warning** that names the overlap, not a blocked opening: the opening is still cut through the host. Touches under 3 L stay the expected frame contact.
+- **The live-matrix failures of 2023, 2024, 2026 and 2027, fixed and re-measured live in Revit 2023 and 2026.**
+  - Product: a `space` asserts it contains its placement point only when it is enclosed (an unbounded space is reported with area 0, never refused); `color_by_value` refuses a view that shows none of the categories in the rehearsal, before any token; `create_area_plan` takes `area_scheme_name` and every refusal lists the schemes (an AreaScheme has no queryable category); duct and cable-tray catalogs report nominal sizes only (their inner/outer are constants, measured); a `run_shift` over a network holding an elbow no longer dies on the elbow's captured location shape (`UndoRules.ShiftLoc`, unit-tested); a transient failure reading `settings.json` is retried, and a refusal that fell closed says the file did not decide it instead of claiming it says `read_only`.
+  - Probes: the new element kinds (sprinkler, flex pipe/duct, space enclosed and unbounded, area, flex resize) pass 7/7 in 2023 and 2026 - they had read a field the real reply does not carry, and their offline test faked it; design options close the sample they open (a close that discards nothing needs no token), so no foreign document is left for the driver; the resolve-clash link source is kept for the harness manifest, and `run_shift` stages its own level and column; `navisworks_readiness` stages its own view on a fixture without one; resize, colour and overlap cases stand on their own duct, wall and plan instead of whatever the fixture happens to hold.
+  - Second pass on the same matrix (15a7270, four years): every remaining failure was the harness, plus one capability the product claimed without ever measuring it.
+    - `hangers` now refuses work-plane- and face-based families **before** anything is placed, naming the family and its placement type. Measured in Revit 2023: a work-plane-based generic model placed at a station stayed at z=0 (the rehearsal re-read it and refused, so nothing was committed, but the capability was never there). Level-based families pass 3/3 in 2023 and 2026.
+    - Probes: `mep-route` and `resolve-clash` run_shift took "the first" structural-column type, which in the full run is a template-authored column with no height (bounding box z 0..0). The router and the clash had nothing to avoid. They now pick the Autodesk concrete column by name. `mep-hangers` authors its own hanger before falling back to a fixture's generic models. `copy_between_documents` overwrote its tool-name variable (`$c` is `$C` in PowerShell), which counted one unrowed fail in every year; a unit test now forbids that pattern in every probe.
+
+- **The Navisworks loop closes in both directions, measured live (2026-09-26, Navisworks Manage 2026 + Revit 2026).** `horizun_coordination`:
+  - `navisworks_readiness` judges the 3D view(s) Navisworks will read: detail level, section box, phase, hidden MEP categories.
+  - `prepare_navisworks` (dry run -> token -> apply, re-read) sets those views to Fine.
+  - `navisworks_status` turns this ledger's measured verdicts into `navis_set_status` suggestions.
+
+  Second round on the same model:
+  1. Readiness caught a Medium view.
+  2. Prepare fixed it.
+  3. Navisworks detected a new pipe-through-column clash.
+  4. Revit reproduced it, showed it, and `resolve_clash` moved the pipe 338 mm.
+  5. `navis_set_status` marked the issue Resolved in Navisworks, verified by re-reading the document: zero active issues, without re-running the test.
+- **Navisworks reads any 3D view named with "Navisworks" before `{3D}`**, measured by renaming one view: the pipes went from 1-primitive lines back to 1587/1787-triangle solids. `show` named its own view "Horizun - Navisworks <date>", so the product planted the view that spoiled the next export.
+  - The default is now "Horizun - Coordination <date>".
+  - Such names are refused.
+  - Readiness/prepare judge every candidate view (`Core/NavisworksViewRules`).
+- **BCF from any tool.** `operation=import` resolves topics from Navisworks, ACC, Solibri or BIMcollab (BCF 2.1/3.0) by their viewpoint components:
+  - IfcGuid, through `IFC_GUID` or a Revit-free decode of `ExportUtils.GetExportId` (`Core/IfcGuidCodec`, checked against an external test vector);
+  - AuthoringToolId.
+
+  It re-detects each pair: only a reproduced pair becomes a finding (origin `bcf`), and the rest are `not_traceable` with the reason. The ledger CSV export gained six provenance columns: `scope`, `external_source`, `external_issue_id`, `priority`, `responsible`, `immovable_discipline`.
+- **`horizun_resolve_clash` sees links and moves connected runs.**
+  - Propose's box prediction and apply's solid re-detection carry the moved element(s) into every loaded link, so a new clash against a link rolls back a move like a host one.
+  - A connected MEP network (runs + fittings, up to 60 members, all host/unpinned/ungrouped, no boundary connector to equipment) can move as one rigid body (`mode: run_shift`), with every internal connection re-read.
+- **Spatial check coverage.**
+  - Data-only writes that move geometry are no longer skipped: a bounding-box cache compares before/after, and a never-seen element is checked under a 200-element cap.
+  - `horizun_verify_changes scope=session` unions every write since start or `since_utc` (cap 2000).
+  - `include_annotation` finds overlapping tags and text notes; a label-only tag without extent is `unmeasured`, never clear.
+- **Composite tools read each child's own verdict** (`Core/CompositeVerdict`). `execute_plan`, `apply_ifc_plan`, `apply_cad_plan`, `apply_cad_update` and `cad_connect` stamp an `application` block; a child that merely succeeded without a verified verdict makes the composite partial or uncertain. Fixes along the way:
+  - `apply_cad_plan`'s `required_missing` was keyed by parameter name across a batch, so one element's value hid another's gap.
+  - `CheckedWriteGroup.Keep()` was trusted without its own outcome.
+  - `family_apply` now folds a post-commit invariant breach into a `partial` verdict.
+- **Re-reads that were missing.**
+  - `manage_views` re-reads created names, `color_by_value` colours, the ids a temporary hide/isolate hid, and legend component detail/position.
+  - `export` counts the files produced for non-PDF formats; an unreadable-before file is `unmeasured`, not new.
+  - `annotate` no longer accepts a null read-back.
+  - `horizun_health` gains `include_verification_catalog`, and names a blocking modal dialog (title, text, buttons, owning module) without clicking it.
+- **New element kinds.** `create_elements`: `sprinkler`, `flex_pipe`, `flex_duct`, `space`, `area`, `area_boundary`, each rehearsed, committed and re-read. `ramp` is refused by name, because no Revit 2023–2027 API creates one. `horizun_mep_routing` resize now covers flex runs and checks every fitting it retypes or inserts against the target size; a mismatch fails the plan. `tools/list` stays under 512 KiB by cutting argument descriptions at 250 characters. Inventory: 122 tools, 414 operations.
+- **IFC and planimetry.**
+  - `deliver_ifc`'s Pset mapping tells an empty Revit parameter apart from a mapping the exporter did not apply (`model_comparison`, from a census before export).
+  - `ids_from_loin` converts length/area/volume bounds to the IFC default unit (`converted_units`).
+  - `fix_planimetry set_crop` accepts a polygon, verified vertex by vertex.
+- **Defects found by running things live.**
+  - `create_elements` rolled back every beam: a framing member has no `Element.LevelId`, and the level now comes from its Reference Level.
+  - `copy_between_documents` gave a clean dry run and then refused on type-name collisions. The rehearsal now performs the copy in a transaction that is always rolled back, and names them.
+- **Fixtures that were missing.**
+  - Workset writes run on a detached copy of the closed-workset fixture.
+  - A panelboard is staged from the year's electrical template for the panel-schedule case.
+  - Design options are read from Autodesk's own sample of the year.
+  - The library document is the year's own template (`{year}` in the path).
+  - `verify-rebar-geometry.ps1` ran live for the first time: 19/19, including Z5, M6 and M7.
+- **`horizun_cde_cloud` measured live against ACC.** On a test project, 2-legged, read-only: `list_projects`, `list_states`, `inspect` (58 files, 30 calls) and `versions`.
+- **Power BI coordination dashboard** (`examples/coordination-dashboard`): a `.pbip` over the ledger CSV. It was opened, refreshed and read back by DAX in Power BI Desktop; the sample data is synthetic.
+### ISO 19650 information management
+
+- **Verified is not the same as right: a spatial coherence check after every write.** Field use (2026-09-25) left a column and a door in the same place with every postcondition true. The dispatcher now watches `DocumentChanged` for the duration of each call (`Core/ChangeWatch.cs`), keeps what the call added or modified after its own rollbacks, and checks those model elements (`Core/SpatialCoherence.cs`): shared solid with every intersecting element (`ElementIntersectsElementFilter` + `BooleanOperationsUtils`), judged by unit-tested rules (`Core/SpatialCoherenceRules.cs`) - an opening blocked by a column, wall, MEP or furniture, a duplicate of the same type, MEP through structure are errors; unjoined overlaps and contents in structure are warnings; hosts, joins, MEP connections, curtain members, the structural frame and MEP through enclosures are expected. A door clear-zone pass flags a column or wall IN FRONT of a door that touches nothing. Replies carry `spatial_check` and `attention` as their first key; data-only tools are skipped; bounded (800 elements, 8 s) and `partial` when a bound stops it; `HORIZUN_SPATIAL_CHECK=off` disables it. New read tool `horizun_verify_changes` (122 tools) checks the last write (or given ids) and returns an IMAGE from a temporary isometric view in a rolled-back transaction group, changed elements blue, errors red, warnings orange. Every call that changed a document also carries `model_changes` (added/modified/deleted as Revit reported them).
+- **Measured live, 2026-09-25/26.** In a dev session on Revit 2026: a door alone came back clean; an architectural column placed in its doorway came back with `attention` and two errors ("door is blocked by column", 0.051 m³ shared, and "column stands in the passage"); a column 700 mm in front of the door, touching nothing, with "column stands in the passage"; `horizun_verify_changes` returned the image with all three in red and the temporary view rolled back. Five-year matrix at 556452c (run-year-matrix + verify-live -WriteProbes): 2023 355 passed / 1 failed, 2024 357/0, 2025 357/0, 2026 364/0, 2027 357/0 - every spatial case passing in every year. The 2023 failure (create_shared re-read after the commit threw: Revit 2023 invalidates the ExternalDefinition) is fixed at 8c98699 by re-reading through a GUID copied before the commit, and Revit 2023 re-measured at 17e51f3: 356 passed / 0 failed, create_shared and all six spatial cases passing. Found on the way and fixed: architectural columns (TwoLevelsBased) were refused by create_elements - they are now placed on their base level, and any column takes `top_level_id`/`top_offset` or `height`, set and read back; `copy_between_documents` accepts 'Family: Type' names, lists the types that exist when one is not found, and a refusal for a type-name collision says which names and how to proceed instead of Revit's "User cancelled the operation"; sheet-set update no longer saves an unchanged membership (Revit threw "Save of the setting was unsuccessful") and `sheet_set_list` answers in the rehearsal; `model_diff explain` never emits two keys differing only in case (a model had "Center Line" and "Center line", which made the reply unreadable to PowerShell). Inventory: 122 tools, 403 operations.
+- **The operations pane said "failed" on every row.** It read `receipt.success`, a field the ledger never wrote (`outcome=ok|failed`), and `document_title` instead of `document`. Rows now show the result in words (changed the model / rehearsal / read / failed) and one sentence in Revit's language saying what was done (tool phrase, request operation or the script's new optional `purpose`, added/modified/deleted, spatial findings); reads and rehearsals are hidden unless asked for (`Core/OperationDescription.cs`, tested).
+- **Field-session fixes (2026-09-25).** `horizun_catalog_lookup` detects its delimiter (tab, `;`, `,`, `|`; a tie refuses) instead of assuming comma - a tab catalog declared every valid code absent - and gains `code_column`/`description_column`/`has_header` and `operation=search` by description. `horizun_execute_python run_async=true` now forwards `arguments` (they arrived as `{}`), accepts evidence given as a single object (it was reported "empty"), and gains `read_only=true` (always rolled back, re-checked with `IsModified` and a census; Save/SaveAs/Close/open refused before running; no lower permission). `horizun_health` reports owned worksets, a bounded borrowed-element scan and Horizun's own recent writes (Revit's Undo stack is not readable by an add-in, and says so). `horizun_delete_verified` previews and re-verifies parameter and global-parameter deletions. `horizun_manage_worksets` measures `ownership_effect` (a rename silently took 14,697 elements) and offers `relinquish_after`. `horizun_transform_elements` gains `rename_level` (views that will rename, Copy/Monitor alerts rehearsed), `change_type_by_rule` (per-instance rule on measured short/long side or area - the linear-metre vs square-metre rule) and `realign_wall_sketch` (SketchEditScope, real rehearsal). `horizun_manage_views` gains sheet sets (`sheet_set_list/create/update/delete`, print selection restored). `horizun_copy_between_documents` accepts `source_path` (library opened in the background, never upgraded, closed without saving; types by name). `horizun_audit_model` gains `wall_sketch_drift`, per-warning `root_cause` (exact duplicate / contained / vertical overlap in mm / stranded profile) and opt-in `template_comparison` against a template and an SPF. A wire test pins `readOnlyHint` on every read tool. Argument descriptions are capped at 290 characters to keep tools/list inside 512 KiB.
+- **Live harness.** `clash-resolve` and `model-diff` read the write gate inverted and never ran with the write tier; fixed, and clash-resolve passed live on Revit 2026. A reply PowerShell could not parse (keys differing only in case) was skipped and the caller waited 620 s, leaving a pending read that killed every later module; the pending read is now reused, late answers are skipped by id and an unparseable reply is returned as an error. New probe modules: spatial-coherence, execute-python-async, read-only-python, health-state, delete-parameters, worksets-ownership, transform-rename-level, manage-views-sheet-sets, copy-between-documents-source-path, field-audit-typechange (all with offline fakes).
+- **The spatial check looks into loaded links.** Each changed solid is carried into every loaded Revit link's coordinates and intersected there; a finding names `b.source=link` and the link, `links_examined`/`link_neighbours_examined` say how far it looked, and an unloaded link is listed in `links_skipped`, never counted as clear. Live probe `spatial-links` (a host wall across a linked wall) passed on Revit 2026.
+- **Calibrated on a real project model, read-only (2026-09-26).** 157 false errors became one warning and 234 doors were checked in 24 s instead of over 300 s: openings under 3 L of shared volume are the frame touching, a door's clear zone is 0.6 m deep and only for doors a person walks through (>= 1.80 m), obstacles under 10 L are ignored, an intersection Revit cannot measure is at most a warning, and a wall sketch may drift 30 mm before `realign_wall_sketch` calls it drift. `horizun_verify_changes` frames the image on the section box and skips link-side elements.
+- **Navisworks round trip, measured end to end (2026-09-26, Navisworks Manage 2026 + Revit 2026).** naviscoord's `navis_handoff` -> `horizun_coordination operation=import_navisworks` (re-detects every pair here; only a reproduced pair enters the ledger, with the issue's priority, responsible and immovable side) -> `operation=show` (a persistent 3D view: the side that must move red, the immovable one orange) -> `horizun_resolve_clash` (moves the responsible side, never the immovable one) -> `horizun_verify_changes`. A pipe through a column: moved 363 mm, re-detection on solids clean, and the same Navisworks test re-run marked it Resolved. Two traps found on the way: at Coarse detail a pipe reaches Navisworks as a line and a Hard test reports zero clashes against it (the 3D view must be Fine); and Revit files every 3D view's camera under a MODEL category, so three cameras made the resolver refuse every lateral move - cameras, viewers, section boxes and MEP system elements are no longer physical anywhere.
+- **`model_changes` tells the truth about rollbacks.** A read-only `verify_changes` reported 11 elements added for a temporary view it had rolled back; the event tally is now reconciled against the model when the call ends (an added id that no longer resolves is gone, a deleted one that resolves came back), Revit's own bookkeeping element is no longer a "modification", and the block carries a bounded sample (id, category, class, name).
+- **Fixtures per year.** `verify-live-year.ps1` reads each year's closed-workset model and S-size model from the private runner map, the S workload opens a scratch copy of it, and case 15 links a scratch copy of the write document when that document has no link to unload (the 2023 one).
+- **Second code-review batch (11 findings, 10 confirmed).** `catalog_lookup` validates `catalog_path` (absolute, .csv/.tsv/.txt, <= 50 MB) before reading; `change_type_by_rule` never lets an unmeasured or non-rectangular face fall through to `else`; `realign_wall_sketch` reports the real rollback status; `sheet_set_create` restores the in-session sheet set it borrowed; parameter-binding removal is confirmed by element identity/GUID, not name; `horizun_health`'s workshare scan drops its unbounded pre-count and the account name; a failed `create_shared` names the definition it already wrote to the SPF (`external_side_effect`); `manage_groups` add/remove_members scope=all declares which instances regenerate and refuses when their members carry Mark/Comments unless `accept_member_regeneration=true`; `manage_curtain` remove_grid_line names the mullions and panels it merges and refuses a door panel unless `accept_panel_merge=true`; MRTR request state never evicts a live nonce and refuses a full table as `capacity`. The one not confirmed (TwoLevelsBased base) was hardened with a note, no behaviour change. Inventory: 122 tools, 47 read-only (`horizun_coordination` now writes a view), 405 operations.
+- **Live matrix, 2026-09-26, at b9aee80** (run-year-matrix + verify-live with -WriteProbes, add-in built per year from a clean tree): **all five years green, 374 passed / 0 failed each** (2025 run at efd2f35 once the user's own Revit 2025 session had closed), including the Navisworks handoff (5/5), spatial links, change_type_by_rule, the closed-workset fixture, the S/M/L workloads and case 15 with a staged link in 2023. The first sweep at 11caa65 caught two real defects the review batch had introduced or hidden - joined walls left unmeasured by an "exactly four edges" rule, and a probe that applied a token-less import through the token path - both fixed (6fa6278, b9aee80) and re-measured. The 2025 run left its own Revit open with no visible dialog after a normal close request (recorded as recovery_pending, not killed); a normal close afterwards exited it and the manifest was restored. The "not covered" rows are fixture limits (no workshared write model, no panel, no design options).
+
+- **`horizun_project_context`** (host-resident): JSON Schema `project-context.v1`, `validate` that keeps invalid / inconsistent / incomplete apart, the ordered intake `questions` (es/en) and a `draft` that writes only with `dry_run=false` and re-reads the file. MCP prompt `project-intake` and resource `horizun://schemas/project-context/v1`.
+- **`horizun_information_container`** (host-resident): ISO 19650-2 container names, `.container.json` sidecars sealed by SHA-256, `verify`, a paginated `inspect` of WIP/Shared/Published/Archived folders cross-checked against the MIDP, and `transition` that copies (never moves), requires `approved_by` for publication and logs to `.horizun/cde-transitions.jsonl`. `horizun_export` accepts the same `information_container`.
+- **`horizun_deliver_ifc`**: one call that exports an IFC with explicit options, checks the file header, validates the FILE against IDS, measures user-defined Pset mapping coverage, reads back the georeference, writes a BCF of the failures and seals the container last. `deliverable_ready` is the file's verdict, never the model's.
+- **Toolsets**: `HORIZUN_TOOLSETS` / `toolsets` select tool packs declared once in the contract; `core` advertises 4 tools (~2.2k tokens) instead of 97 (~108k). Unconfigured, tools/list is unchanged. Resource `horizun://session/toolsets`.
+- **Model-content safety**: invisible and bidirectional control characters in text read from models and files are neutralised to visible `[U+XXXX]` tokens, replies carry a `content_safety` block, and instruction-like text is flagged (never removed). See SECURITY.md.
+- **Clash viewer follows MCP Apps 2026-01-26** (`ui://horizun/clash-viewer`): the CSP is declared at `_meta.ui.csp` with the spec's fields (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`, all empty) on the listing and on the `resources/read` content item; tool calls are enabled by `hostCapabilities.serverTools` of the `ui/initialize` result (a `capabilities.tools` beside it grants nothing); the View sends `ui/notifications/initialized` before anything else and nothing before the host answers; `ui/context-update` became `ui/update-model-context`, tool results arrive as `ui/notifications/tool-result`, and unknown host requests get `-32601`. Kept for pre-spec hosts, because harmless: the old closed `io.modelcontextprotocol/ui` CSP block and the legacy `capabilities` read when a host sends no `hostCapabilities`. A node suite (`tests/Horizun.Server.Tests/McpApps/app-handshake.test.js`) runs BOTH apps' shipped pages against a scripted host and pins the three points; run against the previous clash viewer it fails 12 of 16 checks.
+- **NSR-10 Título K set with real values**: `standards/co-nsr10-titulo-k-evacuacion.json` (0.2.0) now applies the K.3 numbers read from the published text - riser 100–180 mm, tread ≥ 280 mm, 2C+H 620–640 mm (K.3.8.3.4), stair width ≥ 900 / 1 200 mm (K.3.8.3.3), exit door ≥ 800 mm wide and ≥ 2.0 m high (K.3.8.2.1), exits per level from Tabla K.3.4-1 with the occupant load from Tabla K.3.3-1 - with the source URL and numeral on every rule; only travel distance stays `unverified_value` (group-dependent and never computed). `exit_count_minus_required` gains `occupancy_parameter` + `area_per_person_by_group`, so each room takes the factor of the occupancy group it declares; a room with no group or an unlisted one is `not_decidable`, never defaulted.
+- Measured: 5,296 unit tests pass (734 server, 4,562 core); the add-in builds with 0 warnings for Revit 2023–2027.
+- Measured live in Revit 2026 (build 654a954, disposable HZ_WRITE, 1,084 duct segments): deliver_ifc with no duct code failed ids_validate and pset_mapping (0/1084), wrote one BCF topic and sealed the container; after a verified write of the code to all 1,084 ducts the same call returned deliverable_ready=true (IDS passed on the file, mapping 1084/1084), which proves the named ExportUserDefinedPsets options on the file itself. export with a container named the IFC, sealed it (verify = match) and refused a second export onto the sealed name. On a local CDE, inspect reported an overdue and an under-state MIDP deliverable, a missing sidecar and a non-compliant name; shared->published was refused without approved_by and succeeded with it, as a copy, logged. The run found one defect, fixed in 654a954: the container gate was written but not reported.
+- **Transmittals and approval register** (`horizun_information_container`): `transmittal` issues `<project>-TR-0001` for sealed containers in one state (sender, recipients, purpose code and meaning, each file's SHA-256 re-measured against its sidecar or the whole issue is refused), writes `.horizun/transmittals/<id>.json` + `.md` + `.csv` without overwriting and reads them back; the sequence is held under an exclusive file handle, so concurrent issues never share a number. `record_review` appends the receiving party's outcome (accepted / accepted_with_comments / rejected) to `.horizun/reviews.jsonl` and changes no state. `register` joins transitions, transmittals and reviews per container, filtered and paginated, and names the incoherences between them (file changed after issue, review of an unknown container or transmittal, publication logged without `approved_by`). Host-resident; tested without Revit.
+- **MCP elicitation** (form mode, 2025-06-18 and 2025-11-25): the server can now send requests to the client — ids `horizun-server-<n>`, responses recognised by shape and handed over without blocking the reader, per-request timeout, tool-call cancellation, `notifications/cancelled` when it stops waiting, and every pending request failed at once when stdin or stdout closes. Sent only when the client declared `elicitation` at initialize. `horizun_project_context` `operation=elicit` asks the pending intake questions one short form per topic (es/en, typed enums, at most 6 fields), applies them like `draft` (dry_run by default; a refused write is refused before the first form), respects decline/cancel/timeout and lists every question left unanswered with its reason; without the capability it fails with `code: elicitation_unsupported` and the agent asks in the chat. The `project-intake` prompt and the server instructions say so. Measured: 32 new tests, including a round trip through the real server over stdio with a `ping` answered while the form is open; 766 server tests pass. Not yet measured with a real client UI.
+- **`horizun_cde_cloud`** (host-resident, read-only): reads a cloud CDE - ACC/BIM 360 Docs through the APS Data Management API (`data:read`) or a buildingSMART OpenCDE server (Foundation discovery + Documents API 1.0). `list_states` maps cloud folders to the four ISO 19650 states from `cde.states` by exact name and reports unmapped folders; `inspect` lists files per state (version, date, size), checks names and crosses the MIDP through `ContainerInspection`, the core now shared with the local `inspect`; `versions` gives an item's history. Credentials only from server environment variables or `%USERPROFILE%\.horizun\aps-token.json`; with none configured, not one request is made. Pagination, a call budget, backoff on 429 and `coverage_complete=false` for anything unread. OpenCDE cannot enumerate a project without its interactive browser flow, so it reads documents by id. Proved against a fake HTTP handler (21 tests); not yet measured against a live ACC project. Its tools/list entry is 1,210 bytes, which leaves the whole list 16 bytes under the 512 KiB budget.
+- **Live probes for the ISO 19650 tools** in `scripts/verify-live.ps1` (`scripts/live-iso19650.probes.ps1`): deliver_ifc (dry run, apply with a per-run TAB mapping and IDS for the class the model is found to contain, container seal with `verify = match`, readiness that follows the gates, refusal of a second seal, IFC4x3 planned on 2024+ and refused by name on 2023, opt-in `-IsoReadyProbe` for `deliverable_ready=true`), export with a container (IFC, PDF of a real sheet, refused repeat), and host-resident project_context and information_container cases on a temporary CDE. Each run also writes a `horizun.live-evidence/2` record for `consolidate-live-session.py`. Exercised without Revit by `scripts/live-iso19650.tests.ps1` (69 assertions, PowerShell 7 and 5.1). Not yet run in Revit. `verify-live-matrix.ps1` now accepts the schema-2 reports verify-live has written since 1.0.0; it rejected every real report before.
+- **`examples/`**: contract-validated, bilingual payloads for the ISO 19650 start-up (questions → draft → validate, plus a complete `project-context.example.json`), containers (name → stamp → inspect → transition), a verified IFC delivery with a TAB Pset mapping and a matching IDS 1.0 (`HZ_Delivery.Code` on `IfcDuctSegment`), and one call per discipline. `ExamplePayloadTests` validates every `examples/**/*.json` against the `InputSchema` of the tool it declares (unknown schema keywords fail, never pass) and runs the host-resident ones; `ExampleDeliveryFilesTests` proves the example IDS and mapping agree on a hand-written IFC.
+- **One declared verification mechanism per writing tool** (`Core/WriteVerificationCatalog.cs`): a row per tool with mechanism, evidence field, sources and the residual gaps the 2026-09-24 inventory found, and a test that fails when a writer - by contract effect OR by opening `DocumentGate.ForMutation` in its source - has no row. It found `horizun_cad_connect` classified `ReadOnly` while writing through its children in-process (admitted by `read_only`, `readOnlyHint=true`); it is now `MutatingUnlessDryRun`. Verdicts that could pass over nothing now cannot: recipe tools whose every element failed (0 == 0) or that report no count (-1 == -1), delete/set_keynote with nothing compared, a colour legend or override/hide set with no rows, `remove_fields` by `field_index`, a preset with no provable option, an update-only IFC plan stage that covered nothing, a family re-read with no dimensions (parameters and types are now re-read from the saved file). Unreadable values are unmeasured instead of reported: tag leader flags (transform tag operations are now a `PostconditionCheck`), a link's pin state, a duct connector's size (create_elements production properties are now a `PostconditionCheck`, `production_postconditions`). Literal verdicts are derived: materials (and six written-but-never-compared fields), copy between documents, CAD link reload (commit and load result now decide). Responses only gained fields. Not yet measured in Revit.
+- **LOIN to IDS**: `project-context.json` gains an optional, additive `loin` block (ISO 7817-1:2024, formerly EN 17412-1: purpose, milestone, actors; geometry, alphanumeric, documentation; `schema_version` stays 1). `validate` names its contradictions (`loin_property_type_conflict`, `loin_unknown_ifc_entity` against embedded IFC2X3/IFC4/IFC4X3_ADD2 entity lists, repeated ids, impossible bounds). `horizun_project_context operation=ids_from_loin` writes the alphanumerical part as IDS 1.0 and lists, never approximates, what IDS cannot express; the file is proved against the embedded ids.xsd 1.0.0 (buildingSMART, CC BY-ND 4.0, verbatim) and by the bridge's own IdsReader, dry run by default, re-read and re-validated after writing.
+- **bSDD lookup**: `horizun_catalog_lookup` gains read-only `bsdd_search`, `bsdd_search_dictionary`, `bsdd_class`, `bsdd_property` and `bsdd_dictionaries` over the public bSDD API (TextSearch/v2, SearchInDictionary/v1, Class/v1, Property/v5, Dictionary/v1). Classes return `loin_property` suggestions that never guess an IFC data type. Cached 7 days in `%USERPROFILE%\.horizun\bsdd-cache`, 30 calls/min and 500 per process; offline it says so and serves only an expired copy labelled `stale_cache`. No new tool: tools/list grows by 472 bytes (catalog_lookup +308, project_context +164). Tested with a fake HTTP handler only; the live API was not reachable from the build machine.
+
+- **Five-year live matrix, 2026-09-24** (run-year-matrix + verify-live with -WriteProbes, add-in built per year at 8e9d5ca from a clean tree, release-gate fixtures: labelled tag family, HZ24_INACTIVE as the foreign file for 2023): 2023 243 passed / 0 failed / 4 unverified / 12 not covered; 2024 245/0/3/11; 2025 245/0/3/11; 2026 252/0/2/5; 2027 245/0/3/11 - 1,230 passed, 0 failed. The ISO 19650 section passed 13 of 13 in every year. A first run without those fixtures failed only on them, and Revit 2027 exited on its own once; the rerun did not reproduce it. That run left each Revit running (the harness's own link-source copies were not registered); fixed the same day: harness scratch models are adopted through a horizun.harness-documents/v1 manifest, own LINKED models unload with their host (health publishes is_linked), and the harness exit code reaches the driver. Measured on Revit 2026: close.state=closed, manifest restored, 252 passed / 0 failed. Also measured live that day: bSDD (IfcWall with Pset_WallCommon; a SearchInDictionary parsing defect found and fixed - 179 Uniclass classes instead of 0) and ACC through APS 2-legged (list_projects: 2 hubs, 176 projects; list_states read a real project's folders and mapped none it could not match exactly).
+- **Final 2026 live pass, 2026-09-24/25** (run-year-matrix at 81dc3f7, disposable HZ_WRITE): 321 passed / 3 failed / 2 unverified (S size not in the fixture set). The 2027 run at af91438 had failed only on the curtain panel case. A rolled-back typed edit now names the postconditions that disagreed with both values (81dc3f7), which showed the two remaining defects: a panel swapped to a wall type gets a new id that `GetPanelIds` does not list, because the grid keeps the original Panel and `FindHostPanel` names the wall shown in its place (the check now accepts that, and the evidence publishes both ids); and `horizun_manage_parameters create_shared` restored `SharedParametersFilename` before the binding was inserted, so its rehearsal read an invalid ExternalDefinition (the SPF now stays open until the run ends, and the user's file is restored in the run's `finally`). Both fixed at a6e9fff. **Re-measured live on 2026-09-25** (run-year-matrix at b46caf7, Revit 2026, disposable HZ_WRITE): 324 passed / 0 failed / 2 unverified (the S workload size is not in the fixture set); the curtain panel, create_shared and remove_binding cases pass, and the driver closed its own Revit after Revit's crash-on-exit dialog and restored the manifest. The other years at c7b0f8b (same day, same driver): 2023 315 passed / 0 failed / 5 unverified, 2024 317/0/3, 2027 317/0/3 - every unverified case is a fixture limit (no S workload model; HZ_CLOSED_L saved in 2026 cannot open in 2023 and is refused in 2027 rather than upgraded; the 2023 unloaded-link fixture could not be staged; once, in 2023, `settings.json` was held by another process during the tool-pack round-trip and the probe restored it). Revit 2025 crashed natively while opening its fixture (journal: exception 0x80000003 on a non-main thread during File: Open, before any command ran), and the rerun that afternoon passed: 2025 317 passed / 0 failed / 3 unverified (same fixture limits). All five years now have 0 failures with both fixes, curtain panel and create_shared passing in each.
+- **The year-matrix driver adopts a harness's own scratch models, and only those.** `run-year-matrix.ps1` sets `HORIZUN_HARNESS_DOCUMENTS_MANIFEST` to a fresh JSON per harness run (cleared afterwards); `verify-live.ps1` writes there (schema `horizun.harness-documents/v1`, rewritten in a script-level `finally`, so a run that dies half-way still declares them) the `.rvt`/`.rfa` files under its own `%TEMP%\horizun-live-<run>`. `Register-HzHarnessDocuments` registers an entry in the same register, kind `harness_scratch`, only when the schema is right, the folder is a direct child of the temp directory named `horizun-live-<probe_run>`, is not a link and was created after the driver started that Revit, and the path is absolute, inside it, without `..`, and exists; everything refused is reported in the run's `harness_documents` and stays foreign, and so does a model of that folder the manifest did not list. Closing is unchanged: by registered path, rehearsal then token, discarding. 23 new offline cases in `year-matrix.session.tests.ps1` (159 pass, PowerShell 7). Not yet run in Revit.
+- **MCP 2026-07-28 elicitation (multi round-trip requests, SEP-2322)**: `horizun_project_context operation=elicit` under a 2026-07-28 request now answers with an `InputRequiredResult` (`resultType: "input_required"`, one form in `inputRequests`, a `requestState`) and continues when the client calls again with the same arguments, `inputResponses` and the state; the last round returns the usual result (dry_run by default, written only then and re-read). The state is HMAC-SHA256 sealed with a per-process key, bound to the tool, the arguments' digest (another `path` or `dry_run` is `mismatch`) and `clientInfo.name`, expires with `timeout_seconds` and is single-use; any failure is `request_state_rejected` with nothing applied. Capability read from each request's `_meta`; `elicitation_unsupported` loses `input_required_result_not_implemented` and gains `nested_call`. Legacy 2025-06-18/2025-11-25 elicitation is unchanged. Logging under 2026-07-28 (deprecated by SEP-2577, still served): `server/discover` now declares `logging` in the modern block, since the server emits `notifications/message` for requests that name a `logLevel`, and an unknown level is `-32602`. No tools/list change (0 bytes). Proved over stdio; no 2026-07-28 client was available.
+
+- **Parse errors and cancellations say where they came from and what to do next.** Traced from `server.log` on 2026-09-24: all 132 `Expected ':' but got` warnings (Sep 19–24) were this repository's own wire tests sending `{this is not json` and `{not json at all` on purpose, and all 10 `Cancelled while waiting for Revit to answer 'horizun_create_elements'` ERRORs were verify-live W13 case 11 cancelling a queued write on purpose (10–170 ms, nothing ran). No client was corrupting its stream and no batch was lost. A -32700 now carries `error.data` {hint, line, column, offset, length, masked shape} - hints `unescaped_backslash`, `concatenated_messages`, `truncated_message`, `byte_order_mark`, `bare_word`, `not_json` - with every letter and digit masked, so the content is still never echoed; the log line names the client from `initialize`. A cancelled or timed-out call now says what an identical retry does (`retry.verdict`: `same_key_runs_fresh`, `same_key_replays_recorded_answer`, `inspect_model_first`) and names `horizun_submit_job` after a wait of 60 s or more; a client cancellation proven to have removed the work before start is logged as WARN, not ERROR with a stack. The wire tests log to a throwaway data root instead of the owner's. `hz-call.ps1` validates arguments before starting a server, explains unescaped Windows paths and gains `-ArgumentsObject`. No tools/list bytes added; no Revit behaviour changed.
+- **Phases, phase filters, design options, parts and assemblies** (two new tools, ~4.2 KB of tools/list): `horizun_manage_phases` reads phases in order, phase filters with their new/existing/demolished/temporary presentation, design option sets/options/primary/active with members, and each element's phase status (`ElementOnPhaseStatus`) and option; it writes `set_element_phases` (demolition never before creation), `create_phase_filter`, `edit_phase_filter` and `rename_phase`. `horizun_manage_assemblies_parts` lists parts and assemblies and writes `create_parts`, `divide_parts` (levels, grids, reference planes), `exclude_parts`/`restore_parts`, `dissolve_parts`, `create_assembly`, `assembly_views` and `disassemble`. Every write is rehearsed in a TransactionGroup that is rolled back, applied with the token, checked with a `PostconditionCheck` while reversible and re-read after the group assimilates. Measured against RevitAPI.xml 2023-2027: no API creates or reorders phases and `Element.DesignOption` has no setter, so `create_phase` and `assign_design_option` are typed refusals (`no_phase_creation_api`, `no_design_option_assignment_api`) with no Python fallback. Live probes in `scripts/live-probes/phases-options-parts.probes.ps1`, exercised offline only; not yet run in Revit.
+- **Views, schedules and DWG layers** (extends existing tools, +1.5 KB of tools/list): `horizun_manage_views` gains `edit_filter`, `order_filters` (remove/re-add, since Revit has no SetFilterOrder), `apply_filter enabled`, the read-only `explain_graphics` precedence report, category/subcategory V/G overrides with `line_pattern`, `create_template`, `set_template_controls` and template removal (`template_view_id: -1`); a view whose template governs V/G is refused naming the template to edit instead. `horizun_create_schedule` creates multi-category (`OST_MultiCategory`) and key schedules (`key_schedule`, `key_rows`). `horizun_export` gains `format: dwg_layers` (read/create/write a named DWG setup's layer table, re-read from a fresh lookup before and after the commit) and `dwg_setup` for `dwg`. Live probe `scripts/live-probes/views-schedules-dwg.probes.ps1` measures layer-table persistence per Revit year. See docs/TOOLS-EXTENDED.md.
+- **`horizun_manage_groups` and `horizun_manage_worksets`** (two new typed tools; 96 real scripts created or redefined groups through Python, and worksets had no typed write at all). Groups: `list` (types, instances, members, nesting, attached detail groups), `create`, `add_members`/`remove_members` (Revit has no edit-group API: the reference is ungrouped and regrouped; with other instances of the type `scope` is REQUIRED - `all_instances` swaps them onto the new type, re-places each by a measured displacement and checks every retained member by category, type and box - or `this_instance`), `rename_type`, `duplicate_type`, `swap_type`, `ungroup`; `convert_to_link` is refused typed (`code: api_absent`, no API in 2023–2027, Python not suggested); a type with attached detail groups is not redefined. Worksets: `list`, `create`, `rename`, `move_elements` (ids or category; borrowed or read-only elements reported, never forced), `set_default` (active workset; measured preview), `visibility` per view; a model that is not workshared is refused with `code: not_workshared`. Dry run by default, single-use token, `PostconditionCheck` re-read after commit. tools/list grows by 3,385 bytes (1,732 + 1,653). Live probes in `scripts/live-probes/groups-worksets.probes.ps1` (exercised offline by its `.tests.ps1`); not yet run in Revit.
+- **`horizun_mep_routing`**: one multi-operation tool for MEP routing and sizing - `read` (routing rules per group with size ranges, pipe segments with nominal/inner/outer sizes, duct/conduit/cable-tray catalogs, element sizes), `set_rules` (add/remove/move rules, preferred junction), `add_sizes`/`remove_sizes` (segment, conduit standard, duct shapes, cable tray; a size in use is refused), `resize` (runs by ids or system to catalog sizes only; connections re-read, replaced/inserted fittings reported) and `size_by_flow` (velocity-limit proposal, writes nothing). Writes rehearse, take a confirmation token and re-read after commit. Live probe `scripts/live-probes/mep-routing.probes.ps1`, not yet run in Revit. Details in `docs/TOOLS-EXTENDED.md`.
+- **Styles, units and electrical** (`horizun_manage_styles`, `horizun_manage_units`, `horizun_electrical`): object styles, subcategories, line styles, line and fill patterns; project units per spec (ForgeTypeId), Project Information and base points (shared-coordinate writes need `confirm_shared_coordinates=true`); panels, circuits, panel assignment, circuit membership and panel schedules. Reads answer directly; every write rehearses in a rolled-back transaction, applies inside a TransactionGroup and assimilates only a `PostconditionCheck` re-read from the committed model. tools/list grows by 5,941 bytes. Builds with 0 warnings for Revit 2023–2027 (`ElectricalSystem.VoltageDrop` is read from its parameter on 2026–2027). Live probes in `scripts/live-probes/styles-units-electrical.probes.ps1`, exercised offline by its `.tests.ps1`; not yet run in Revit. Detail: `docs/TOOLS-EXTENDED.md`.
+- **Curtain grids, railings, slab shape and arrays**: `horizun_manage_curtain` (read, add/remove grid line, add/remove mullions per segment, panel type incl. curtain-wall doors), `horizun_slab_shape` (read, add_point, add_split_line, modify_subelement, reset_shape; the editor and point/split-line calls guarded per Revit year), `horizun_create_railing` (on a stair/ramp or along a sketched path) and `array_linear` / `array_radial` in `horizun_transform_elements` (grouped or not; every copy re-read at its formula position). Each edit is re-read through a `PostconditionCheck` and rolled back on disagreement. tools/list grows by 5,722 bytes. Builds with 0 warnings for 2023–2027; live probe `scripts/live-probes/architecture-edits.probes.ps1`, exercised offline only. Not yet run in Revit. See docs/TOOLS-EXTENDED.md.
+- **`horizun_resolve_clash` and `horizun_undo`**: resolve_clash `propose` (read-only) turns open findings of the horizun_clash ledger into conservative candidates - the unconnected, unpinned host MEP run (the smaller one when both are runs) is shifted perpendicular to itself or re-elevated the minimum plus `clearance_mm`, capped by `max_move_mm`; structure, architecture, linked elements, connected runs and moves that would reach a third element are report-only, by code. `apply` (dry run -> token) moves inside a TransactionGroup and re-detects on solids over the swept neighbourhood: the pair must be gone and no new pair may appear, otherwise the whole group rolls back; a kept move marks the finding `resolved_by_model` with the measurement in its history. `horizun_undo` (`list`, `undo_last`) applies the inverse that transform_elements, write_params_verified, create_elements and resolve_clash now record after a verified commit (`undo` block in their replies), refusing when the batch's elements changed since, when the document was saved or synchronized (VersionGUID/NumberOfSaves), or when the last batch was not recordable; every element is re-read against the state the batch found. tools/list +2,905 bytes. 10 core tests; live probe `scripts/live-probes/clash-resolve.probes.ps1` (exercised offline by its .tests.ps1). Not yet run in Revit.
+- **`horizun_manage_parameters`** and **`horizun_query_classification`** (read only): the BindingMap in full (name, data type, Instance/Type, categories, group, GUID, varies across groups); `create_shared` writes the definition to a chosen SPF and binds it, rehearsing against a temporary COPY of the SPF and re-reading both the binding and the file on disk; `rebind` and `remove_binding` count the values that would be lost in the plan the token binds; Global Parameters list/create/set (display units, formula, association to element parameters)/delete with the computed value re-read. `create_project` is a named refusal: RevitAPI 2023-2027 has no call that creates a non-shared project parameter. Classification: keynote and assembly-code tables with path, load status, entries, parent and use counts by code, `unused_codes`, `missing_codes`, and family lookup tables read from the project through `FamilySizeTableManager` without opening the family. Revit 2026+ renamed `UNIFORMAT_CODE` to `ASSEMBLY_CODE`; both are handled per year. tools/list grows by 3,776 bytes. Live probes in `scripts/live-probes/parameters.probes.ps1`, exercised offline by `parameters.tests.ps1`. Not yet run in Revit. See docs/TOOLS-EXTENDED.md.
+- **`horizun_model_diff`** (one multi-operation tool, 2,609 bytes in tools/list): `snapshot` records the active model - or a `.rvt` opened detached in the background and closed without saving - to `%USERPROFILE%\.horizun\snapshots\<id>.json.gz` (per element UniqueId, category, family/type, level, workset, phases, bbox, location, instance and type parameters in internal units, a volume/area/extent hash; hashed, re-read after writing); `compare` reports added / deleted / modified with parameter before/after, moves over a tolerance and type changes, grouped by category, inferred discipline and level, paged, with CSV + JSON exports; a re-created model (few shared UniqueIds) is flagged and `heuristic_match` pairs by category/family/type/location, every pair marked `inferred`. `colorize` is the only model write: a duplicate of the caller's view with per-state overrides, dry-run token bound to the resolved element set, re-read inside the transaction (rollback on mismatch) and after the commit. `explain` narrates only measured facts (counts, links, worksets, phases, last quality run); the server adds the ISO 19650 gaps from `project_context_path` with the same evaluation `horizun_project_context` runs. `record_quality` runs `model_scan` or `audit_model` in process and appends the reported totals to `quality-history\<project>.jsonl`; `quality_trend` returns the series as rows for `horizun_power_bi_push` plus a CSV. 36 new unit tests; live probe `scripts/live-probes/model-diff.probes.ps1` exercised offline only. Not yet run in Revit.
+- **Impact preview (MCP App `ui://horizun/impact-preview`)**: an interactive view of the rehearsal (dry_run) of `horizun_write_params_verified`, `horizun_set_keynote`, `horizun_delete_verified`, `horizun_transform_elements` and `horizun_create_elements` - totals by category and level, before -> after per row, warnings (collateral, cascade, truncation, withheld token) and a checkbox per row to EXCLUDE it. The token binds the whole request (the narrowed field is in each command's plan hash, now asserted by a test), so excluding rows asks for a NEW rehearsal of the reduced request and Apply only ever spends the token of the rehearsal on screen, with a fresh idempotency key. Self-contained HTML (no URL, no fetch, empty CSP), light/dark and host theme variables, accessible table. No new tool: tools/list grows by 305 bytes (five `_meta.ui.resourceUri`). The adapter is pure JS run under node by `ImpactPreviewAppTests` against five synthetic fixtures whose shape is tied to the emitting source; `scripts/live-probes/impact-preview.probes.ps1` measures the real replies and the refusal of a full-plan token for a narrowed request. Not yet run in Revit.
+- **Code checks, 4D and federation** (three tools, +3,474 bytes of tools/list): `horizun_code_check` runs the requirement-set grammar of `docs/requirement-set.md` - which had a loader and no tool - extended with geometric `measure` assertions (door width as an upper bound, ramp slope/run/width/landing from the ramp's own faces, stair riser/tread/2R+T/run width, space illuminance, exits per level against a declared occupant load), `between`, `measure_range`, `missing_is`, per-rule `source` and `unverified_value`; outcomes passes/fails/not_decidable/unreadable, and a rule that examined nothing is not_decidable. Example sets `standards/co-ntc6047-accesibilidad.json`, `co-nsr10-titulo-k-evacuacion.json` (every threshold unverified: no number applied) and `co-retilap-iluminancia.json` (RETILAP 2024, Tabla 3.2.2.6 a). `horizun_link_schedule` imports MS Project XML (MSPDI), CSV and Primavera XER, matches by parameter or rules without ever picking between two activities, writes activity/dates to text instance parameters and colours a duplicated status view, both dry-run/token/re-read. `horizun_federation_check` compares categories per model, expected links, worksets and a measured same-site check against declared rules. Unit-tested; live probes in `scripts/live-probes/code-checks-4d-federation.probes.ps1`, not yet run in Revit.
+
+## v2.0.5 — 2026-09-22
+
+- Release hygiene correction: removes trailing blank lines that blocked the v2.0.4 CI run before package installation or live Revit verification.
+
+## v2.0.4 — 2026-09-22
+
+- **Reliable English release runner.** Live release verification launches Revit with /language ENU and requires horizun_health to report English before it accepts evidence, so Revit 2023 cannot silently run its localized UI path.
+- **Installer false-positive repair.** A clean Addins directory that Inno Setup reports as ERROR_SUCCESS while finding no *.addin files is accepted; access and I/O failures still block the installation.
+
+## v2.0.3 — 2026-09-22
+
+### Revit 2023 Spanish release-gate fixes
+
+- The verified parameter writer resolves stable English contract names for Mark,
+  Diameter, Rebar Cover - Exterior Face, Unconnected Height and Structural through
+  their `BuiltInParameter` identities. Client requests and CSV imports no longer
+  depend on the Revit display language.
+- Detached local opens recognise Revit's exact Spanish `_desenlazado` title as
+  well as `_detached`, while preserving exact title matching. A correctly opened,
+  active detached model is no longer rejected solely because Revit localized its
+  synthetic filename.
+- The live verifier now uses stable parameter ids where it is testing schedule
+  fields and API identities where it reads wall height. Its duct-takeoff assertion
+  relies on the command's connector verification instead of an English category
+  display string.
+
+## v2.0.2 — 2026-09-22
+
+### Fixed after independent review
+
+- The loopback check now fails closed when Windows cannot inspect the tunnel
+  process and its direct children, and verifies that the URL published by the
+  client belongs to a loopback listener it owns. An empty inspection result no
+  longer becomes a positive connection result.
+- The startup grace now uses the actual first-poll timeout of tunnel-client
+  v0.0.14. A configured 60-second poll receives an 85-second grace; the previous
+  fictional `CONTROL_PLANE_INITIAL_POLL_TIMEOUT` left it at 55 seconds and could
+  report a healthy client as failed before its first allowed poll completed.
+
+### ChatGPT Work through OpenAI's Secure MCP Tunnel: the helper now works on Windows
+
+Reported from the field: a user on Revit 2026 with 2.0.1 could not connect
+ChatGPT. Every cause below was reproduced against OpenAI's official
+`tunnel-client` 0.0.14 (SHA-256 checked against its `SHA256SUMS`, SLSA
+attestation verified) before it was fixed.
+
+- **The server path never reached tunnel-client intact.** `--mcp-command` is
+  parsed twice - by Windows, then by tunnel-client's own shell-like parser, where
+  `\` escapes and `'` opens a quote. `C:\Windows\System32\cmd.exe` arrived as
+  `C:WindowsSystem32cmd.exe`, so `init` refused every Windows machine, and a path
+  with an apostrophe did not parse at all. The helper now passes forward slashes
+  inside literal double quotes, proves the value parses back to the same path
+  before handing it over, and was verified with the official `init` on a path
+  containing a space, an apostrophe and accented letters.
+- **The right package is named, and the wrong one is recognised.** OpenAI
+  publishes runtime-only variants with no `init`, `doctor` or `--mcp-command`.
+  The helper names the exact ZIP (`tunnel-client-v<version>-windows-amd64|arm64.zip`)
+  and detects a runtime build from its own answers, even renamed to
+  `tunnel-client.exe`.
+- **Detection keeps the evidence.** Exit codes, stdout/stderr and timeouts are
+  kept apart; `--version` replaces the `version` command that does not exist; an
+  error that mentions `--mcp-command` is no longer read as support. An explicitly
+  chosen executable that does not exist is reported, never silently replaced; a
+  proven one is remembered.
+- **One profile directory** (`%LOCALAPPDATA%\Horizun\integrations\chatgpt\profiles`)
+  for init, doctor, run and revoke. A `horizun-revit` profile left in
+  tunnel-client's default directory by an earlier version is reported and left
+  untouched.
+- **The tunnel survives the window that started it, and holds none of its
+  handles.** It used to die when that console closed, and it now runs in a hidden
+  window of its own; a caller capturing the helper's output is released at once.
+  The process is recorded by pid, start time and executable, so a reused pid is
+  never stopped, and `-Stop`/`-Revoke` say "not verified" rather than "stopped"
+  when they cannot see it exit.
+- **Windows PowerShell 5.1.** `ProcessStartInfo.ArgumentList`, absent there, is
+  gone from the helper and the MCP probe.
+- **"Connected" is measured.** `/readyz` stays 200 while every poll of OpenAI
+  fails, so the helper reads `commands_poll_last_successful_timestamp_seconds`
+  from the client's loopback `/metrics` (published through `--health.url-file`)
+  and reports *configured* only when the last successful poll is recent. The
+  window is derived from the poll settings the tunnel runs with (two
+  `poll_timeout + guardrail` cycles plus 20 s: 90 s with OpenAI's defaults), and a
+  new process is *connecting* rather than failed during its first poll. Measured
+  against a local stand-in, not against OpenAI. A call from ChatGPT reaching Revit
+  is never claimed by this machine.
+- **Loopback, checked.** The health listener is requested as `127.0.0.1:0` in the
+  profile and as a flag on `run`, and the addresses the process really listens on
+  are read from the operating system; anything else fails local health.
+- **The key during start.** It is placed in the helper's own process environment
+  only for the instant ShellExecute copies it, and the previous value (or its
+  absence) is restored even when the start fails - under PowerShell 7 that needs
+  `[NullString]::Value`, since `$null` would leave the variable defined and empty.
+- **Prerequisites block what depends on them**; a JSON report and the durable
+  state are written on every path, including early failures; the general
+  diagnosis measures the tunnel instead of trusting a recorded state.
+- **Setup no longer says ChatGPT Work was configured for you.** It is not: it
+  needs account-side objects and OpenAI's client.
+- The tunnel tests now run in pull requests and CI under both Windows
+  PowerShell 5.1 and PowerShell 7.
+
+## v2.0.1 — 2026-09-21
+
+> **The first published 2.0 release.** `v2.0.0` was tagged and built, and its
+> Revit 2023 live gate found the defect below before anything was published. Tags
+> are never moved, so that tag has no release; everything described in this
+> section ships in 2.0.1.
+
+### Fixed since the v2.0.0 tag
+
+- **A wall built exactly on its line was refused in models whose project base
+  point is not at the internal origin's height.** The line check introduced in 2.0
+  measured the distance ACROSS the wall's line in three dimensions, so it compared
+  the height of Revit's location line (internal coordinates) with the height of the
+  asked point (project elevation). MEASURED in Revit 2023 on a model whose project
+  base point sits 94.17 mm off the internal origin: every wall was refused as
+  94.17 mm off its line, and 3800 mm on Level 2, and the batch rolled back — the
+  refusal was safe, nothing wrong was written, but no wall could be created. The
+  distance across and along the line is now measured in plan; the height stays
+  verified by `level_id`, `level_elevation` and `offset`, on the level's own
+  ruler. Re-measured live in Revit 2023 on the same model: the walls that were
+  refused on Level 1 and Level 2 now commit and verify.
+
+### The 2.0 release
+
+**A revision update now re-measures the world it was planned against, can be
+continued after a failure, and never claims a network it did not build.** This is
+a major version because two calls that used to succeed now fail: see *Breaking*
+below before upgrading.
+
+### An apply that checks the plan is still about this model
+
+`horizun_apply_cad_update` accepted an `apply_binding` and **never read it**. A plan
+made against one issue of a drawing could be applied to a model whose drawing,
+references, link geometry, rules or elements had all moved since, and the command
+would carry it out and report success.
+
+Both CAD applies now go through the same check (`CadApplyGuard`), which names what
+moved before anything is written. Measured live on seven situations: a label edited
+after planning, geometry edited after planning, a nested reference revised, a source
+missing, the link reloaded, an element edited by hand, and a plan made while the
+sources and the link could not be shown to be the same issue. All seven refuse
+before any write, and the model's element and connector census is identical either
+side of the refusal.
+
+### An update that stops half-way can be continued
+
+Three different things get called a retry, and the product now tells them apart:
+
+| | |
+|---|---|
+| **repeat** | the same key over finished work replays that reply and runs nothing |
+| **continue** | `continue_operation` carries out only what is still pending, under the decisions the first call was given |
+| **a new plan** | the world moved; the old decisions do not carry, and the guard refuses |
+
+The operation record is durable on the machine, so **save the model, close Revit,
+open a new session and continue** works — measured across two sessions. The reply
+carries `operation` with what is confirmed, what is still to do, what each action
+created or removed, and the decisions that were authorised. Finished records are
+swept after 30 days; an unfinished one is never swept, at any age.
+
+A caller whose apply committed and whose answer was lost gets
+`already_applied_under_this_key`, naming what is left and how to continue, instead
+of being told the drawing had changed — what had changed was what their own call
+did.
+
+### It says what it leaves unjoined, and refuses what it cannot rebuild
+
+An update writes **geometry**. Joining is `horizun_cad_connect`'s consented step, and
+it always was — but nothing said so, and a division built by an update left two ends
+at the same point holding nothing while every count reported the model correct.
+
+- the reply carries `verdict`: `geometry` applied, `network: not_asserted`;
+- `ends_that_meet_and_are_not_joined` names the ends left loose at the points the
+  call worked at;
+- a plan that **releases fittings** is refused before any write unless the caller
+  sends `accept_connections_not_rebuilt`. Consenting to lose a fitting is not
+  consenting to lose the junction it served.
+
+### A fitting remembers where it came from
+
+Every fitting this bridge places is stamped with its junction, its members, its type
+and a print of how it was left, and reads back as `made_here`, `made_here_modified`
+or `origin_unknown`. A fitting the bridge placed and a person then moved is **their**
+work: releasing it needs `release_protected_fittings`, the same second consent as a
+fitting nobody here placed. A model from before this record is never claimed
+retrospectively.
+
+*(The stamping had never worked: it looked for a connector within 50 mm of the drawn
+junction, and inserting an elbow trims both runs ~380 mm back, so every fitting read
+as `origin_unknown`. The fitting that serves a junction is the one element, not a
+member, that **both** members hold.)*
+
+### Every held row of an update plan says why
+
+`held_rows` collects each row the plan will not carry out on its own with the reason
+in the same place, including what it is waiting for. A row whose `held_because` is
+null is a gap in the planner and is labelled as one.
+
+### Isolated Revit sessions report what is true
+
+`scripts/dwg-bim/session.ps1 status` asked the state file and answered from it, so a
+session whose Revit had gone still read *running*. It now reports three separate
+things — the record, the process (`alive` / `exited` / `not_ours` / `never_started`)
+and the environment verified against files and hashes — and **never** takes the
+absence of Revit as evidence that the year's manifest was restored.
+
+### Eighteen new tools — 80 → 98
+
+The surface this release publishes is larger than the revision work above. Nothing was removed
+or renamed; **98 tools, 262 suboperations**, and the eighteen that are new fall into five
+groups.
+
+**Reading a DWG without importing it.** `horizun_cad_extract` reads a linked drawing's layers,
+lines, arcs, text and blocks directly; `horizun_cad_symbols` lists the block symbols it defines
+and where each is placed; `horizun_cad_unit_instances` finds repeated units and the transform
+that places each occurrence. Revit's own import cannot see a block name, which is why these
+exist.
+
+**Networks, not just lines.** `horizun_cad_networks` derives what a drawing says about its own
+network — which ends meet, what belongs between them, which stay open on purpose — and
+`horizun_cad_connect` builds those joins, placing the fitting each junction needs and verifying
+it. `horizun_connect_mep` connects or disconnects named connectors and refuses to close a
+visible gap by moving somebody's geometry. `horizun_cad_review` reports what a conversion could
+not settle, with the evidence for each held candidate.
+
+**IFC and IDS.** `horizun_plan_from_ifc` plans Revit elements from an IFC under a declared
+mapping without importing it, `horizun_apply_ifc_plan` carries that plan out through typed
+commands, and `horizun_validate_ids` checks a model against an IDS specification and reports
+each requirement it fails.
+
+**Model work.** `horizun_manage_materials` reads, creates and assigns materials;
+`horizun_copy_between_documents` copies elements between open documents keeping identity and
+reporting substitutions; `horizun_structural_connections` reads and applies structural
+connection types; `horizun_selection_exchange` reads what a person selected in Revit and can
+offer a set back for them to select.
+
+**Machine state and procedures.** `horizun_audit_access` reports what this bridge is allowed to
+do on this machine and who decided it; `horizun_repair_memory` recovers durable state when a
+record is unreadable; `horizun_run_procedure` runs a named, versioned procedure this machine
+has stored, and `horizun_promote_script` is how a verified script becomes one instead of
+staying ad-hoc code.
+
+### Breaking
+
+- **`apply_binding` is now a required argument of `horizun_apply_cad_update`.** It
+  was neither declared nor read before. Any caller following the documented flow
+  already has it: copy the `apply_binding` block from the `horizun_plan_cad_update`
+  reply verbatim.
+- **A plan that releases fittings is refused** unless `accept_connections_not_rebuilt`
+  is `true`. A call that used to apply geometry and silently leave the network broken
+  now writes nothing until the caller says it accepts that.
+- `state: applied` never meant the network was built. It still does not; the new
+  `verdict` block says so explicitly rather than leaving it to be assumed.
+
+### Limits of this release
+
+- The live evidence for these changes is **Revit 2026**. The add-in compiles for
+  2023–2027 and the release gate runs the matrix; the DWG→BIM revision work above was
+  measured on one year.
+- `horizun_plan_cad_update` takes no outfall, so a revision that re-shapes a run on a
+  layer with a declared fall **holds it** rather than laying it level. Building a
+  falling run is `horizun_plan_from_cad` with an outfall, and pipes only — a duct has
+  no bore to turn an invert into a centreline, and asking for one is refused.
+- The unjoined-end report covers ends that coincide. A declared junction where the
+  model has a single loose end is invisible to it by construction; that is what the
+  drawing-aware acceptance is for.
+
+### Also in this release — documentation and distribution metadata
+
+- Correct Claude Desktop's required in-app extension step and installed recovery
+  paths; align English, Spanish and agent instructions with Setup.
+- Separate stable, source and installed versions, historical benchmark scores and
+  release evidence. Document current protocol support without changing it.
+- Keep checked-in registry identity aligned with the product version. Publish the
+  existing extension as an additional release asset with verified metadata and
+  an explicit prerequisite: install the Windows product first.
+- Generate readable release notes and check publication documentation in CI.
+- Publish the complete bilingual tool catalog, named suboperations, the PDF-to-Revit
+  video and versioned live-test evidence directly in the README. Explain the
+  measured 70/79/80-tool permission profiles and the core-only subset.
+- Deduplicate repeated schema branches in the suboperation counter: 208 distinct
+  tool/selector/value choices replace 213 schema occurrences, with no tool removed.
+
+
+
+## v2.0.0 — 2026-09-20 (tagged, not released)
+
+Built and put through the release gate, and withdrawn before publication by the
+wall defect described under v2.0.1. Its content ships in v2.0.1.
+
+## v1.3.3 — 2026-09-14
+
+**Claude Desktop is installed by the person using it, and Setup now hands the
+file over properly.** Its extension is installed from inside the app - that step
+exists nowhere else - so Setup no longer tries to write the app's configuration
+underneath it. Instead it copies the `.mcpb` and a printed instruction sheet to
+**Documents\Horizun-Revit-MCP** and opens that folder with the file selected.
+The package used to sit under `AppData\Local\Programs`, which Explorer hides and
+the app's own file picker opens nowhere near: the one manual step began by
+hunting for a file.
+
+**The instruction sheet ships as a PDF, with screenshots**, in Spanish and
+English, rendered at build time so nothing has to be produced on a machine that
+has no renderer. It describes the UI as it actually is - drag the `.mcpb` onto
+the Extensions page, or Advanced settings > Install extension - rather than the
+path the documentation used to claim.
+
+**No Start-menu shortcut asks anybody to run a script any more.** Claude Code,
+Codex and ChatGPT Work are configured by Setup itself; Claude Desktop is the one
+manual step and it now arrives with its file and its instructions. What is left
+in the Start menu is the product folder and the Hub link.
+
+**Two faults found by installing rather than reading.** The configuration writer
+refused with *"it would have removed"* and named nothing, on a config with no
+other MCP entries - a false positive in the guard that protects other servers.
+And the whole final section of Setup sat behind `if WizardSilent then exit`, so
+a quiet install skipped the handover entirely; copying the files is installing,
+not reporting, and now happens either way.
+
+## v1.3.2 — 2026-09-14
+
+**The installer's post-install steps never ran.** A screen recording of an
+ordinary install showed `CreateProcess failed; code 267`, then a success page.
+Nothing had been configured: no client registered, no Claude Desktop connection,
+no `.mcpb` offered. Three separate faults, each hidden behind the next, and all
+of them present in every release before this one.
+
+- **The helpers ran before the server existed.** Inno executes a `[Run]` entry
+  without the `postinstall` flag during *Finishing installation*, which is before
+  `CurStepChanged(ssPostInstall)` — and that is where this installer swaps
+  `server.installing` into place. The working directory could not be entered:
+  267, `ERROR_DIRECTORY`. They now start from `ssPostInstall`.
+- **They ran under 32-bit PowerShell, where System32 is a lie.** Setup is a
+  32-bit program, so the system directory was redirected to SysWOW64 — where
+  `conhost.exe` does not exist. Measured: from a 32-bit PowerShell,
+  `Test-Path C:\WINDOWS\System32\conhost.exe` is False while the file plainly
+  exists. Setup now uses the native path, and `complete-install.ps1` resolves
+  System32 or Sysnative by its own bitness instead of assuming.
+- **Every child inherited a working directory that was deleted.** The chain led
+  back to Setup's temp folder, which Windows removes as Setup exits, so starting
+  the MCP server failed with *The directory name is invalid*. Setup passes the
+  install directory; the stdio helper starts a command in the command's own
+  folder.
+
+**One language at a time.** Prose picked a language while shortcut names, the
+wizard's task text and the Hub action were Spanish literals, so an English Setup
+told people to click shortcuts that existed only in Spanish. All of it now comes
+from one set of `CustomMessages`, used both by the Start-menu entry and by the
+text that names it. Verified by installing in each language and reading the
+result off the screen.
+
+**The final dialog states the `.mcpb` path.** The extension route is the one
+where a human has to find a file, and a route that ends in "go and look for it"
+is not a route.
+
+**An open Claude Desktop is a pending step, not a failed install.** It was
+recorded as `failed`, which sends people to reinstall a product that installed
+correctly. It now records `pending_user_action` and names the one click left.
+
+## v1.3.1 — 2026-09-13
+
+The 1.3 release. Everything described under v1.3.0 below ships here; that tag
+was never published, because its five-year live matrix was not clean and
+published tags in this repository cannot move.
+
+**Geometry on a level whose elevation is not zero.** Four defects, each measured
+live in Revit 2023 and 2026 against the 1.3.0 candidate, each invisible while
+every fixture used a level at elevation zero.
+
+- A wall asked for an absolute base Z was verified against its `LocationCurve`,
+  which sits on the level's reference plane, not on the physical base. A wall
+  based at Z=0 on a level at 5 ft reports `LocationCurve.Z` 5.0 with a base
+  offset of −5.0, while its solid starts at 0 — where it was asked to. The
+  postcondition therefore refused correct geometry and rolled the batch back.
+  Z is now compared against the element's own base constraint, re-read after the
+  commit, and the solid's measured elevation span is published beside it.
+- A structural column was never placed where it was asked. Revit drops the Z of
+  the creation point, and translating the instance by that Z changes nothing.
+  The elevation a level-based instance obeys is its base offset, so the move is
+  confined to XY and the elevation goes through the parameter that governs it.
+- `level_elevation` re-read the level that was *requested*, which can only agree
+  with itself. It now re-reads the level the committed element carries.
+- `BeamSystem.Create` can silently bind another level — measured, the lowest
+  level of an Autodesk MEP sample binds one level up — and refuses a level with
+  no plan view through a message that names a parameter. Both are refused by
+  name now.
+
+**Tags.** `horizun_create_family` gains `source_path`, which loads an `.rfa`
+that already exists and re-reads the family and its types from the project
+afterwards; the public Revit API cannot create a label in an annotation family,
+so a usable tag family can only come from a file. A label-only tag family —
+which is every stock Autodesk tag — publishes no extent in the API, and
+requiring one refused all of them for a fact that says nothing about whether the
+tag is correct. Placement is verified by view, host, head, orientation, leader
+and text; the missing extent is reported with its reason, and layout says when
+it placed a tag as a point rather than claiming a clearance it did not take.
+
+**Claude Desktop.** Setup staged a `.mcpb` under `%LOCALAPPDATA%` — a folder
+Explorer hides and a file picker cannot browse to — and asked the user to find
+it. The helper now writes the documented configuration entry and finishes on its
+own; `-Extension` keeps the package route and asks where to put the file,
+offering `Documents\Horizun`, then opens Explorer there. It does not write to
+the Desktop: where somebody's files land is their choice, not the installer's. The installer's own dialogs now speak the language the
+user chose and name the shortcuts that really exist: the success dialog was
+English in a Spanish install and pointed at a shortcut name that was not on the
+Start menu. The command-line shortcut no longer closes its own window on an
+unlabelled hex fingerprint, and a machine with only Claude Desktop is told so
+instead of getting an error about two CLIs it never installed.
+
+## v1.3.0 — tagged, never published
+
+Integrates the BIM production workflows, owner-local mode and history controls,
+workshared protection, annotation/sheet checks, PDF verification and delivery
+ledger developed after 1.2.1. Enterprise policy and receipt forwarding remain
+optional and explicitly configured.
+
+Requested geometry is re-read after commit, with atomic rollback on mismatch.
+Creation adds explicit point coordinate modes, per-edge roof slopes, wall
+profiles, stairs, displacement sets and per-element parameters/source references.
+Architectural type and family-symbol duplication gains real rollback rehearsal.
+Existing production creation, MEP connections, tag editing and curve editing are
+preserved. `wall_join` uses `join_end`, keeping `end` as the curve endpoint.
+
+Save operations respect `dry_run`. Python source/include hashes participate in
+idempotency, structured transport errors preserve the underlying cause, and
+progress reports distinguish queueing from execution. Temporary capture options
+restore view state; eligible plan/section captures return measured world-to-pixel
+calibration. Python remains owner-controlled and self-reported.
+
+The README, installation FAQ and LLM instructions foreground the downloadable
+Windows installer and distinguish its included runtime from the SDK needed only
+to compile source. See [release details](docs/RELEASE-1.3.0.md). Final package and
+live release-matrix evidence are still pending; this entry is not a release claim.
+Its live matrix failed on Revit 2023 and left two probes unverified in every
+year. The tag stays where it is; the work ships as v1.3.1 above.
+
+## v1.2.1 — 2026-09-04
+
+ChatGPT Work is a supported client through OpenAI's Secure MCP Tunnel. The
+installer ships setup, credential, status and diagnostic helpers and names the
+client explicitly. This was verified in the desktop Work interface with a free
+account. Active organisation-specific classification skills were removed, and a
+release gate prevents their terminology from returning in current product files.
+
+## v1.2.0 — 2026-09-04
+
+The first release since **1.1.6**, and the version stamp has said `1.2.0` since
+the work below started: no `v1.2.0` tag or release exists anywhere, so this is
+that version being finished rather than a new number. MINOR under the release
+policy — new tools, new optional arguments, new fields, new refusals for cases
+that were previously undefined — and **not** a MAJOR: no tool was removed or
+renamed and no returned field changed meaning.
+
+**The contract hash is `d1b3abb98b4d8df680572b29` (80 tools).** It differs from
+1.1.6's, so the server and the Revit add-in **must be installed together**; a
+mixed pair refuses to pair rather than half-working. There is no partial
+deployment and no separate server version.
+
+**One installer now prepares Codex, Claude Code and Claude Desktop.** Every client
+runs the same installed stdio server. The completion helper registers Codex and
+Claude Code beside their existing MCP servers after each client closes, while
+Claude Desktop receives a real Desktop Extension (`.mcpb`, manifest_version 0.3)
+that names the installed server. Its machine-local copy carries the resolved path
+instead of depending on `${HOME}` expansion. The one action owned by Claude
+Desktop — selecting **Install Extension** — is recorded as
+`pending_user_action` with the exact staged package rather than reported as done.
+
+Claude Code and Codex CLI remain optional: the installer does not require either
+executable to install the Revit bridge or prepare Claude Desktop. Per-client state
+is durable in `install-status.json`; backups preserve all existing MCP entries.
+`horizun_execute_python` remains refused by default and connecting any client
+never grants it. See `docs/CLIENTS.md` for the universal GitHub installation and
+the final step for each client.
+
+**Upgrading.** Close Revit and every MCP client, then run the installer and
+acknowledge that it is unsigned — public releases are unsigned by policy and
+carry no Windows publisher identity. The server and the add-in are installed
+together; a mixed pair refuses to pair rather than half-working, so an upgrade
+that stops half-way leaves nothing usable until it is finished or rolled back.
+From source: `git pull`, close Revit, run `install.ps1`.
+
+**Known limits of this release, stated as limits.** The effective state of a
+workset closed on a LINKED model is not readable through the public Revit API
+that was inspected: a link loaded with a workset closed reports every workset
+open and still hands over that workset's elements, so a takeoff cannot tell the
+two loads apart and every linked document row now says so instead of implying a
+coverage it cannot support. A Revit-side failure inside one action of a confirmed
+correction plan, and a geometry read that throws, are proved over the real code
+paths offline but were never produced by Revit in the available fixtures. An
+element held by a second Revit user, a model in ACC and a real Power BI push
+remain unmeasured for want of a second user, an authorised disposable cloud model
+and an authorised test destination — those are absences of a resource, and none
+of them is described here as fixed or as passing.
+
+**Static, at the head:** Core tests 3740, Server tests 476, the add-in compiled
+for Revit 2023–2027 with `-warnaserror` and no warnings, and the 23
+`scripts/*.tests.ps1` gates the PR workflow runs, all passing.
+
+**Live, across FIVE Revit years** (2023, 2024, 2025, 2026, 2027), without
+replacing the installed pair: **878 unique cases - 841 passed, 0 failed, 16
+unverified, 21 fixture-missing** over 87 runs and 3230 recorded results, every
+year measured at the head. Every case carries result_status, evidence_level and
+blocker_kind, and the published matrix is RENDERED from the record rather than
+typed beside it.
+
+NOTHING IS FAILING, and what is not passing is labelled as one of three
+different things: an EXTERNAL BLOCKER (21 cases - a second Revit user, an
+authorised ACC model, an authorised Power BI destination), NOT OBSERVABLE
+through the API (5 - the effective state of a workset closed on a link), or
+STRUCTURALLY VERIFIED but not reproduced live (11 - a Revit-side failure inside
+one action of a confirmed plan, and a geometry read that throws). A condition
+nobody observed is no longer filed as a missing fixture.
+
+- **An action whose postcondition could not be READ is `uncertain`, not
+  `failed`.** The apply loop moved to `CorrectionApplyLoop`, in Core and
+  Revit-free, driven by a delegate - the substitutable thing is the step
+  EXECUTOR, and the shipped command builds exactly one, the one that dispatches
+  the typed child. There is no failure switch in the product. That made all six
+  situations of `rollback_scope: per_action` testable, and one was wrong: a step
+  that came back `uncertain` made its action `failed`, which claims knowledge
+  nobody has. The write may have happened; the action now says so, and the
+  re-audit sends its elements to not_verifiable rather than to failed or
+  corrected. The scope is defined where it is implemented, in five numbered
+  promises, and pinned by CorrectionApplyLoopTests.
+
+- **A workset closed on a LINK is not observable, and the reply says so.**
+  MEASURED: a link created with a WorksetConfiguration closing one workset by id
+  reports every workset open inside the linked document AND hands over that
+  workset's 392 elements - identical, element for element, to the same type
+  reloaded with every workset open. The API exposes no way to read back a link's
+  load configuration. Every linked document row of a takeoff now carries
+  `linked_document_means` - an absence in a link is NOT evidence of a closed
+  workset - the headline stops blaming a link's worksets for an absence, and the
+  probe reports requested_closed apart from observed_closed.
+
+- **An inventory finding is corrected when the item CHANGES, not when it
+  vanishes.** The re-audit judged every correction by disappearance, and the
+  `links` check lists every link type with its status - so a reload that applied,
+  and that the typed child verified as `Loaded`, was reported `persistent` in
+  every Revit year. `CorrectionRecipe.Postcondition` now says which of the two a
+  recipe means: `removed_from_finding` for the defect lists (unchanged) and
+  `item_leaves_the_filter` for the links/reload recipe, judged on the same typed
+  `status` the recipe already filters on. An item that is NO LONGER LISTED is
+  not_verifiable, never corrected - it may have been deleted, or cut off by top.
+  The row publishes the postcondition it applied and the value it read per
+  element. Fixed, and green in all five years; the regression fails on the code
+  before the fix.
+
+- **One broken link hid that defect in every year.** The Snowdon fixtures carry a
+  link whose file is not on disk; it unloads to `NotFound`, the typed command
+  refuses to call that an unload - correctly - and the corrections harness, which
+  only ever tried the FIRST link type, reported the whole reload recipe as a
+  missing fixture. It now tries each link type in turn and says what it tried.
+
+- **`ElementId.Value` is a 2024 API.** The DWG harness read it when staging an
+  imported drawing, so on Revit 2023 the script threw and the harness recorded
+  "Revit gave back no ImportInstance" - a harness bug reported as a missing
+  fixture, in the one year where the fixture was perfectly possible.
+
+- **The evidence pipeline refuses what it cannot count, and chooses what it
+  stands on.** `consolidate-live-session.py` rejects a session carrying a status
+  outside the nine buckets, a run that cannot name its commit and binaries,
+  totals that disagree with the probes, or an undeclared repetition. A CASE is
+  keyed on the SCENARIO rather than the document title, because Revit renames a
+  detached copy and `HZ_CLOSED_L_detached_1` is not new coverage. The accepted
+  run of a case is the latest that QUALIFIES - clean tree, a named candidate, the
+  right contract - and a run that does not qualify is kept as history with the
+  reason it was not chosen; a case with nothing that qualifies fails the session
+  by name. Results are grouped by the bytes that produced them.
+
+- **A run keeps its own binaries.** `run-year-matrix.ps1` copies the signed DLL
+  Revit loaded, the UNSIGNED build it came from and the server executable into
+  the artifact directory, named by hash, because the development store holds one
+  signed copy per year and the next session signs over it. It also reads the
+  server's stamped commit - the driver does not build the server, and a run that
+  records only a hash names a file nobody can attribute afterwards.
+
+- **The server was reproducible all along.** The claim that it does not set
+  `DeterministicSourcePaths`, so a rebuild elsewhere cannot reproduce its bytes,
+  was wrong: `-getProperty` answers true and two worktrees of one commit produce
+  the identical DLL, MVID and apphost. What was actually wrong is that the driver
+  hashed a server it had not built, whose own stamp said it came from another
+  commit and a dirty tree.
+
+- **A signed binary is tied to its source by a hash, not by an MVID alone.**
+  `scripts/live/verify-binary-provenance.ps1` rebuilds the candidate in a
+  throwaway worktree; for every year the rebuild is BYTE-IDENTICAL to the
+  pre-signature artifact the run kept, and the MVID only carries that identity
+  across the signature, which changes the file. Signed files that a later session
+  signed over, and that nobody kept, are named as unrecoverable rather than
+  re-derived.
+
+- **Breaking for a mixed deployment:** the contract hash changed. Deploy the
+  server and the add-in together.
+
+### Landed first, on 2026-09-01
+
+- **Typed multi-layer wall decomposition.**
+  `horizun_split_multilayer_walls` creates one independent wall per volumetric
+  layer and names each type from the original type, material and layer number.
+  The original wall becomes the core carrier, preserving its `ElementId`,
+  `UniqueId`, hosted doors, windows, openings, sweeps, reveals, dimensions and
+  tags. Straight and arc walls, all six location lines, joins, structural
+  footings and hosted reinforcement are verified after commit. Rebar may follow
+  its carrier curve or either constrained face point by point; geometry-derived
+  shape dimensions may change only when both shape ownership and the centreline
+  constraints are proved. A wall that cannot preserve its dependencies rolls
+  back atomically.
+
+- **Model Doctor over the native RVT.** `horizun_model_scan` now exposes 32
+  paged diagnostic sections for performance, model hygiene, naming, families,
+  views, sheets, annotations, coordinates, datums, worksharing, structure,
+  federation and delivery readiness. `horizun_audit_model` adds durable
+  snapshots, trends, a coverage-aware health index, typed correction proposals
+  that remain dry-run, and a prevention decision that never claims to enforce a
+  Revit save. Caller-supplied 4D/5D and documentary profiles stay
+  organisation-neutral; absent profiles are `not_requested`, never a pass or a
+  failure invented by Horizun.
+
+- **Measured in one Revit 2026 session (build 26.4.0.32), on the commits
+  before the version bump.** The wall matrix ran at `b08b7a2` and accounted for
+  all 55 cases: 45/45 executable cases passed, with five unavailable fixtures,
+  one multiuser environment case and four public-API limits kept in separate
+  buckets. The Model Doctor ran at `a792663`: 71 passed, 0 failed, and five
+  cases that need ACC or real multiuser/workset state recorded as
+  fixture-missing rather than simulated. Both binaries carried the same source
+  as this release (`git diff b08b7a2 1b3575c -- src` is empty) but were stamped
+  `1.1.6`; no `1.2.0`-stamped binary has been measured, and Revit 2023, 2024,
+  2025 and 2027 were not opened. Every number is bound to its commit, binary,
+  contract hash and fixture in `docs/evidence/release-1.2.0-live-evidence.md`.
+  Neither campaign saved its disposable fixtures.
+
+- **Breaking migration:** `horizun_audit_model` requires
+  `target_document`. The server and Revit add-in must be upgraded together so
+  their contract hashes match.
+
+## v1.1.6 — 2026-08-29
+
+- **The optional Session panel has been removed from Revit's ribbon.** Tool
+  packs, permission inspection, planimetry auditing and durable-job status remain
+  available through the MCP surface, but Revit no longer shows the four
+  provisional letter-icon buttons for those operations. The primary bridge,
+  Python-consent and Horizun Hub controls are unchanged.
+
+## v1.1.5 — 2026-08-29
+
+- **A planimetry census no longer regenerates every placed view.** The protected
+  `v1.1.4` release matrix passed Revit 2023–2026, then Revit 2027 crashed natively
+  on the first `horizun_query_planimetry mode=inventory` call. Its journal
+  recorded access violation `0xc0000005` inside `generateViewSpecificGRep` while
+  Revit was producing viewport graphics for unrelated MEP views. The inventory
+  answer asks only “how many?”, but the shared collector had materialised every
+  viewport outline and annotation box before returning those counts. An
+  unscoped inventory now takes a lightweight exact-census path: population
+  totals still come from native collectors and reference states remain
+  explicit, while viewport, crop and annotation geometry is reserved for the
+  detailed `placements`, `views` and `annotations` modes that actually return
+  it. Missing counts remain null and named, never fabricated as zero.
+
+## v1.1.4 — 2026-08-29
+
+- **The release gate now asserts the actual queued-cancellation guarantee.**
+  Revit 2023 in the `v1.1.3` matrix proved that an apply cancelled while still
+  behind another command never wrote its grid and consumed neither its
+  confirmation token nor its durable idempotency key: the identical retry ran
+  freshly and produced exactly one grid. The harness still asserted an older
+  measured no-recall path for work already delivered to Revit, contradicting
+  both the probe title and the safer observed result, so it marked correct
+  behaviour as a failure. The probe now distinguishes the boundary explicitly:
+  queued work must be removed before start; work already running remains
+  non-interruptible. The release harness no longer guesses that boundary from a
+  sleep: a marker proves a blocking command owns Revit's UI thread, the add-in
+  log proves the apply entered the FIFO behind it, and the MCP cancellation
+  reply must prove it was removed before start. Revit 2026 then passed the full
+  gate 242/242 with 157 committing probes.
+
+## v1.1.3 — 2026-08-29
+
+- **No dropped command in Revit's callback-unwind window.** The `v1.1.2`
+  release matrix measured Revit 2026 return `ExternalEventRequest.Denied` to a
+  sequential caller only 4 ms after the preceding command completed; Revit
+  remained open and served every later request. Horizun had treated every
+  `Denied` as terminal shutdown, so that one dry run never entered the FIFO and
+  the stable release was correctly blocked. The dispatcher now retries that
+  answer for a short, bounded interval off Revit's UI thread, while repeated
+  denial and shutdown still close untouched work as `not_started`. Four pure
+  sequence tests plus a wiring regression cover transient Denied → Accepted,
+  transient Denied → Pending, terminal repeated denial and Unknown.
+
+## v1.1.2 — 2026-08-29
+
+- **Deterministic complete-surface inventory.** The inventory generator now
+  launches the measured server with a disposable `HORIZUN_DATA_ROOT`, the full
+  permission profile and all tool packs. It therefore counts the complete
+  product contract without inheriting a developer's or hosted runner's active
+  modelling profile, and it never reads or rewrites that user's settings. The
+  regression test deliberately supplies a restrictive parent profile and still
+  requires the complete 78-tool inventory.
+
+## v1.1.1 — 2026-08-29
+
+- **Clean-runner release fix.** Inventory generation now preserves a complete
+  executable path when a fresh checkout contains only the Release server
+  binary. PowerShell previously unwrapped the one-item candidate list into a
+  string and indexing it selected the first character (`C`) as the process to
+  execute. Developer machines with both Debug and Release outputs masked the
+  defect. A regression gate now pins the one-binary case. The structural-state
+  fixture also creates its own `docs/evidence` parent so it runs in the public
+  projection where private evidence artifacts are intentionally absent. No
+  Revit command, schema or model behaviour changed from v1.1.0.
+
+## v1.1.0 — 2026-08-29
+
+- **Native-model diagnostics, snapshots and readiness.** The diagnostic surface
+  now reads coordinates, datums, naming, families, views, model weight and
+  delivery readiness directly from the active RVT, without IFC, COBie or a PDF
+  export. Requirement-set rules remain organisation-neutral and fail closed on
+  incomplete coverage. A durable local snapshot and health-index layer records
+  provenance, coverage and run-over-run changes without uploading model data.
+  The P0 slice was measured live on Revit 2026 at candidate `09fc20b`: 16/16
+  probes, 0 failed / 0 unverified / 0 not covered. The wider 33-story programme
+  remains explicitly tracked in `docs/MODEL-DIAGNOSTICS-PROGRAM-STATE.json`;
+  incomplete backlog items are not presented as released behaviour.
+
+- **Structural modelling and reinforcement.** Typed structure reads and verified
+  rebar planning/apply/audit now cover hosted bars, zones, slab mats, geometry
+  containment and quantities, with explicit refusals for design decisions the
+  caller did not supply. The dedicated matrix ran the same candidate on Revit
+  2023, 2024, 2025, 2026 and 2027: 60/60 probes per year, 300/300 total, with no
+  failed, unverified, not-covered or fixture-missing result. Exact evidence and
+  known exclusions are recorded in `docs/evidence/structure-matrix.json` and
+  `docs/STRUCTURAL-PROGRAM-STATE.json`.
+
+- **Expanded production surface.** Loaded-link dimensioning, whole-chain
+  annotation planning, per-room view planning, richer view and sheet operations,
+  schedule definitions, revisions, durable jobs, MEP/coordination/penetration
+  workflows, tabular exchange, family checks and dynamic tool packs ship as one
+  compatible minor increment. The generated contract inventory contains 78 MCP
+  tools and 182 dispatched operations; those are capability counts, not claims
+  that every enum variant has live coverage.
+
+- **The release harness now has one owner for MCP stdout.** The tool-pack live
+  probe no longer starts a second asynchronous read while the first is pending,
+  and it edits the isolated `HORIZUN_DATA_ROOT` used by the release run instead
+  of the machine owner's settings. The first `1.1.0` candidate was rejected on
+  Revit 2023 by this race before it could produce a report; the source gate now
+  pins both invariants.
+
+### DWG-to-BIM and installation hardening — 2026-08-27
+
+- **DWG → BIM, phase DWG-4.** A linked drawing becomes a model through a
+  requirement set the caller writes; no layer name, family or office standard is
+  compiled in. **Measured live on Revit 2026 at candidate `c3deb2f`: 238/238
+  probes across eighteen versioned harnesses under `scripts/live/`, every artifact
+  from ONE build** — `scripts/live/verify-dwg-all.ps1` runs them in a fixed order
+  and refuses to add up results that are not.
+
+  New in this phase: **typed CAD linking** (`horizun_manage_cad_links`) verified
+  by content, with `unload` refused by name because `CADLinkType` has no `Unload`
+  in 2023–2027; **curved walls** surviving drawing → element → audit; **floors
+  with holes**; **rooms** placed by a point genuinely inside an L; **doors and
+  windows hosted** in the wall the drawing implies, with a refusal that names the
+  two-pass order; **architectural and structural columns, grids, beams**; a
+  `structural` flag re-read from Revit's own parameter; `bridge_openings_mm`, so
+  a wall a plan drawing breaks at every opening is read as one wall; the
+  **twelve-name change vocabulary** for an incremental revision, every count
+  reported including the zeros; the audit's **substance codes** `unhosted`,
+  `type_differs` and `size_differs`; **planimetry** derived from the converted
+  model and audited in the model, never through a PDF; and **S/M/L performance**
+  against budgets declared in source before anything was measured.
+
+  Seven product defects were found by the run series and fixed. The two worth
+  naming: a producer that never called `Finalise`, so **every curved wall ever
+  read came back at confidence 1.00 with no reason given and was silently held
+  back** — from outside, a drawing full of curved walls converted to nothing; and
+  a compound wall exporting **six** concentric arcs, of which the reading built
+  two walls, the second out of the first one's material layers.
+
+  `horizun_query_model` can now be asked what an element lives IN (`host_id`,
+  `host_category`) — there was no typed way to check hosting, so it could only
+  be believed. `horizun_query_cad` publishes the drawing's **arcs as arcs**, not
+  only as the chords they were also broken into.
+
+  Guide: `docs/DWG-TO-BIM.md`. The decision NOT to read DWG files directly, with
+  the conditions under which to reopen it: `docs/ADR-001-direct-dwg-reader.md`.
+  Ledger: `docs/DWG-PROGRAM-STATE.json`, generated from the roll-up artifact.
+
+- **`install-status` can no longer claim more than it checked.** `live_verified`
+  now requires five things to agree, each recorded beside the answer: the server
+  that replied is the one INSTALLED at `server_path` (by SHA-256), the commit it
+  reports is the one stamped into that binary, the contract hash is readable, a
+  Revit is named, and a document is open. Anything missing writes
+  `deployed_pending_health` with the reason. On a development machine an older
+  `horizun-mcp.exe` left running answers `horizun_health` perfectly and reports
+  its own commit — that is why.
+
+### Model and document production — 2026-08-25
+
+- **Dimensions into loaded RVT links.** The host-only rule is gone:
+  `horizun_get_dimension_references` takes `linked_targets` (one entry per link
+  INSTANCE — two placements of one file are two identities), reports the link
+  instance, link type, linked document and linked element as four separated ids
+  with the placement transform and its 0.1 mm-grid fingerprint (handedness
+  included), and returns geometry in HOST coordinates. `horizun_annotate`
+  consumes the returned host-document representations — mixed host+linked
+  chains included — and binds the link's placement into the plan, so moving the
+  link between rehearsal and apply refuses as `stale_plan` naming
+  `link_transform_moved`. `horizun_query_dimensions` resolves linked references
+  THROUGH the live link when loaded and reports `link_state`/`reference_coverage`
+  instead of counting an unloaded link as broken. Unloaded, missing, nested and
+  non-creatable cases each carry a structured code.
+
+- **Whole-chain and per-room production planners.** `horizun_plan_annotations`
+  gains `auto_dimension_grids`/`_levels`/`_curtain_walls`/`_openings` (host or
+  ONE named link instance): direction grouping at a stated 0.5° tolerance,
+  positional ordering with a 0.1 mm coincidence refusal, duplicate detection by
+  unordered reference-set identity, stacked chains, structured omission codes
+  and a never-optimistic coverage verdict. New read-only `horizun_plan_views`
+  plans per-room deliverables (oriented elevations via the smallest turn a
+  four-way marker's symmetry allows, crossing sections from exact box support
+  functions, a cropped plan) under a token naming pattern that refuses unknown
+  tokens, returning a complete `horizun_manage_views` request.
+
+- **`horizun_manage_views` grows from 12 to 24 operations.** Area plans,
+  callouts, placeholder sheets and their conversion, sheet duplication with or
+  without content (refused by name when the source carries placed schedules),
+  phases, scope boxes, view ranges, rectangular crops carried through the crop
+  frame conversion, annotation crops, viewport retyping against `GetValidTypes`,
+  cross-sheet viewport alignment against a still anchor, and elevation-marker
+  rotation verified by re-reading the turned view direction. Sheet numbers are
+  checked unique against the document AND the batch before anything runs.
+
+- **`horizun_manage_schedules` (new).** Schedule DEFINITIONS as a verified
+  batch: material takeoffs, sheet/view lists, revision schedules and keynote
+  legends created; fields resolved by stable parameter id or unambiguous name
+  (a name matching two columns refuses listing both ids); filters and sorting
+  DECLARED whole so replays are idempotent; the confirmation token binds each
+  target's whole definition fingerprint; replies carry the canonical definition
+  before/after and the changed sections. `horizun_manage_revisions` learns to
+  WITHDRAW a revision from sheets, refusing by name the case where it reaches
+  the sheet through a cloud.
+
+- **Dynamic tool packs.** `tool_packs` in settings.json selects named subsets
+  of the 62-tool surface (core is welded on; dependencies arrive transitively
+  and visibly; malformed configurations fall closed to core-only, loudly). A
+  pack is visibility, never elevation — the permission profile stays the
+  authority, execute_python still needs the owner grant, and hidden means
+  unreachable on every dispatch path including `horizun_execute_plan` children.
+  `HORIZUN_TOOL_PACKS` gives administrators an environment override; compatible
+  clients refresh via `tools/list_changed`; `horizun_health` publishes the
+  active selection. See docs/TOOL-PACKS.md.
+
+- **The Session ribbon panel.** Tool packs, security (profile, Python origin,
+  recent ribbon changes), a planimetry review that runs the SAME read-only
+  audit an MCP client runs, and the durable job records — all native dialogs,
+  bilingual, and never a write path: corrections stay behind the typed tools.
+
+## v1.0.0 — 2026-08-25
+
+- **Version 1.0.0 and permanent unsigned-release policy.** The shared product
+  version is now 1.0.0. Public Windows artifacts remain intentionally unsigned:
+  the bootstrap requires `-AllowUnsigned`, CI enforces `NotSigned` on every
+  Horizun-owned binary and Setup, and package metadata discloses that publisher
+  identity is unavailable. SHA-256 manifests, SBOM, GitHub attestations, exact
+  installed-byte verification and the full Revit matrix remain mandatory.
+
+- **End-to-end planimetry production.** The direct-model audit now feeds a full
+  typed production surface: deterministic whole-sheet packing
+  (`horizun_pack_sheets`), read-only collision-aware tag and semantic
+  intent-dimension planning (`horizun_plan_annotations`) through the existing
+  rehearsed `horizun_annotate` writer, atomic revision/sheet/cloud production
+  (`horizun_manage_revisions`), and the `planimetry-review` MCP prompt for visual
+  judgement over real sheet PNGs without a PDF intermediary. Explicit tag types
+  and the pre-existing tag count are bound into the materialised plan. Production
+  annotation discovery uses document-wide class sweeps filtered by
+  `OwnerViewId`, avoiding Revit 2023's measured unopened-view collector gap.
+  Unplaced sheet content is measured through a real provisional viewport or
+  schedule instance (including the viewport label) with a confirmed rollback;
+  apply spends approval before that measurement transaction and preserves the
+  measured offset between the paper rectangle and Revit's insertion point.
+
+- **Deletion now fails closed when its discriminator is missing.**
+  `horizun_delete_verified` requires an explicit `mode`; omitting both `mode`
+  and `ids` no longer selects the broader `purge_unused` branch. `dry_run` had
+  prevented an immediate deletion, but a malformed request must not even
+  rehearse a destructive scope the caller did not name.
+- **Live evidence now identifies its harness.** New release-gate reports carry
+  the committed `verify-live.ps1` commit, Git blob and SHA-256, and the evidence generator
+  requires the same clean harness across all five years. Historical schema-2
+  evidence remains valid. The completed schema-4 matrix pins candidate
+  `32baa87`: Revit 2023–2027 each passed 165/165 probes (825/825 total), and
+  separately records 23 correction plus 5 autonomous-production cases per year.
+
+- **Planimetry corrections — `horizun_fix_planimetry`.** The auditor had eyes;
+  this is the hands, and they never guess. Nine typed operations —
+  `set_view_template`, `set_view_scale`, `rename_view`, `rename_sheet`,
+  `place_title_block`, `move_viewport`, `move_schedule`,
+  `clear_element_override`, `set_crop` — with every final value explicit in the
+  request. A missing instruction is a refusal, not a choice.
+  - **A finding is the only licence to write.** Every action cites the finding
+    it repairs (rule id, requirement set with version and SHA-256, element ids,
+    and the `observed` block verbatim). Before any transaction opens the whole
+    audit is recomputed through the auditor's OWN collector and rules, and the
+    action is refused when the finding is gone (`STALE FINDING`), when the
+    model no longer shows what was observed (`STALE OBSERVATION`, printing both
+    states), when the finding is currently `unknown` — an unmeasured fact is
+    never corrected — when the operation does not address that rule, or when an
+    inline requirement set hashes differently from the one the finding cites.
+  - **Rehearsed by materialisation, not by prediction.** `dry_run` defaults to
+    true and CREATES the whole batch provisionally inside a transaction,
+    measures every postcondition there, and rolls back; a rollback Revit does
+    not confirm withholds the token and reports the call `uncertain` rather
+    than clean. The token binds the request AND the resolved elements'
+    before-state, so a model that moved refuses as `stale_plan`.
+  - **Atomic, then re-read.** The apply commits ONE `TransactionGroup`; any
+    failed action or postcondition rolls the ENTIRE batch back. Every promised
+    property is then re-read from the committed model — including the sheet
+    field that was *not* renamed (whose expected value is its before-value, so
+    a fix that quietly moved it fails), a title-block count that must stay at
+    exactly one, and proof that clearing an element override left the CATEGORY
+    override and the view template untouched.
+  - **`resolved` is the auditor's verdict, not the writer's.** After the commit
+    the full audit runs again — a partial re-evaluation of only the affected
+    checks is not demonstrably equivalent when overlap and coverage are
+    cross-entity — and the reply separates findings resolved, persistent and
+    NEW, with coverage before and after. A verified postcondition does not by
+    itself resolve a finding, and resolving one cannot hide that another
+    appeared. If the re-audit fails, nothing is declared resolved.
+  - No export, no PDF and no arbitrary-code path anywhere on this surface, each
+    pinned by a source-scanning test. Packing, auto-tagging, dimensioning by
+    intent, revision generation and visual judgement are refused BY NAME in
+    every reply's `not_covered` rather than approximated.
+
+- **A description cap that did not hold.** `Tools.CompactDescription` promised
+  900 characters and could return 901: the ellipsis it appends was never
+  counted against the budget, so a description whose sentence boundary fell
+  exactly on the limit came back one over. The only coverage was an aggregate
+  assertion over the descriptions that happened to exist, every one of which cut
+  earlier — so the defect was waiting for the next tool, and the planimetry fix
+  was the next tool. Fixed, and pinned by a sweep across every input length
+  through the boundary instead of a sample of the current table.
+
+- **The pinned-runtime check compared a version against a type name.** Every
+  self-contained publish failed with `expected pinned System.Xml.XmlElement`
+  while the publish itself was correct. PowerShell's XML adapter returns the
+  `XmlElement` rather than its text once the element carries an attribute, and
+  `RuntimeFrameworkVersion` carries `Condition`. `pack.ps1` and `sbom.ps1` now
+  read through `SelectNodes` + `InnerText`, which does not depend on whether an
+  element happens to be attributed.
+
+### Planimetry foundation — 2026-08-24
+
+- **Planimetry, read and audited from the model — `horizun_query_planimetry`
+  and `horizun_audit_planimetry`.** The documentation surface (sheets, views,
+  viewports, schedule placements, dimensions, tags, text, 2D detail,
+  view-to-view references) is now queryable and auditable directly from the
+  database, with real ids, sheet-coordinate and view-plane geometry, explicit
+  coverage and no PDF anywhere in the loop. Both tools are read-only by
+  construction — no `Transaction` on the whole path, enforced by a
+  source-scanning test — and both consume ONE shared collector
+  (`PlanimetryInventory`), so the query and the audit cannot disagree about
+  what is on a sheet.
+  - The query answers in six explicit modes (`inventory`, `sheets`, `views`,
+    `placements`, `annotations`, `references`), deterministically ordered and
+    paginated with cursors bound to both the arguments and the result set; a
+    total the inventory could not compute is absent and named, never zero, and
+    a reference the API cannot resolve is an explicit `unknown` with the
+    reason, never inferred from a name.
+  - The auditor returns findings — `blocking`, `advisory` or `unknown`, no
+    0–100 score — from a universal catalog of 46 checks that are true without
+    any company standard (touching placements are NOT overlapping; references
+    into links are NOT broken; a view without a template is advisory, not a
+    defect), plus an INLINE requirement set for everything with a number or a
+    name in it: naming, allowed scales/templates/types, margins and gaps,
+    required parameters, forbidden overrides, and tag coverage that counts
+    only elements visible in the view, separates host from linked, names the
+    exact untagged ElementId and honours explicit exclusions. A malformed set
+    is refused whole; every regex runs under a match timeout; every finding
+    cites the set's id, version and SHA-256.
+  - An unreadable fact is ALWAYS `unknown` and never a pass, a check with
+    unknowns is never `passed`, and incomplete coverage (a died pass, an
+    unreadable field, a closed workset, an unloaded link) is stated in words
+    on the reply. This phase applies no correction: `fixable` is false on
+    every finding, and the deliberate non-judgements (which walls should be
+    dimensioned, whether a sheet "looks right") are published per reply in
+    `not_covered`.
+  - The five-year live matrix is green WITH the planimetry section: 136
+    probes per year (114 previous + the 22 planimetry cases, split 11 query /
+    11 audit), 0 failed / 0 unverified / 0 not covered on Revit 2023-2027,
+    dimensions still 17/17 and 2D detail still 11/11, all bound to one
+    candidate. Three product facts fell out of getting there, each measured
+    live before a line changed: TextNote.Text appends a terminating CR and
+    re-encodes line separators (the annotate text verification refused every
+    correct note ever created - fixed via a pure, 13-case-pinned
+    normalisation that undoes exactly Revit's re-encoding and nothing more);
+    the view-scoped FilteredElementCollector omits elements that are
+    demonstrably in a not-yet-regenerated view (tag coverage now decides
+    visibility by substance: un-hidden + bounding box in the view +
+    crop intersection); and Viewport.Create returns null - without throwing -
+    for an EMPTY drafting view, which manage_views only discovers after its
+    commit (recorded in the backlog).
+  - Everything except the Revit read is proved Revit-free: 163 Core cases
+    (layout geometry where touching is not overlapping and an unreadable box
+    is not an empty one at the origin; loader refusals; universal and
+    configurable rules; determinism; contract and permission visibility) plus
+    4 Server cases for the published tools/list entries. The live gate gains a
+    22-case planimetry section per Revit year — staged sheets with a known
+    overlap, a deliberately untagged pipe, a stale cursor refused by name, a
+    byte-compared twin audit, an unloaded link proving coverage degradation —
+    and the durable evidence manifest moves to schema 2, refusing any year
+    whose planimetry cases are not all green across BOTH tools. Measured on
+    the way in: the members this surface uses are identical across all five
+    RevitAPI.dll generations, except the `GuideGrid` class, which exists in
+    none of them (the guide grid is read via
+    `BuiltInParameter.SHEET_GUIDE_GRID`). Full reference:
+    `docs/PLANIMETRY-AUDIT.md`.
+- **The live matrix has a durable, sanitized in-tree record.** The full
+  verify-live reports never enter Git (they carry machine-local paths and ids;
+  per release they travel as attached artifacts), which left the green matrix
+  with no durable record at all. `scripts/generate-live-evidence.ps1` now
+  distills the five artifacts into `docs/evidence/live-matrix.json` — per-year
+  probe counts, case totals, Revit builds, and the SHA-256 of every artifact,
+  server and add-in, bound to one candidate commit — and refuses to write
+  anything that is not a complete green five-year matrix. The committed file is
+  independently held to the same contract (green, coherent, machine-local-free)
+  by `EvidenceManifestTests` in the Server suite.
+- **The five-year live matrix is green at one commit.** The full release gate —
+  114 probes, 31 committing, 17 dimension cases, 11 2D-detail cases, 0 failed /
+  0 unverified / 0 not covered — passed on Revit 2023, 2024, 2025, 2026 and
+  2027 against the same installed candidate, each artifact binding the server
+  and add-in hashes to the release manifest. Three defects had to fall first,
+  each measured rather than patched around:
+  - The redistributed-runtime pin (`RuntimeFrameworkVersion` 8.0.30) was
+    unconditional, so the ordinary framework-dependent server build — the one
+    the test suite launches — demanded a runtime patch the machine did not
+    carry and 14 wire tests reported their codes untested. The pin is now
+    self-contained-only (the only route that ships a runtime), a regression
+    test reads the built runtimeconfig and refuses any exact-patch demand, and
+    the self-contained publish still resolves the exact pinned runtime pack
+    that `pack.ps1`/`sbom.ps1` verify.
+  - A shipped live report said `probes=112` beside 114 rows: the summary was a
+    formula frozen before the manifest-hash checks existed. The summary is now
+    computed from the definitive row collection, the harness refuses to write
+    a report that disagrees with itself (counters vs rows, sums, duplicate
+    names), and the gate independently re-checks the written JSON.
+  - Measured year split: Revit 2023 exposes NO reference-carrying pipe
+    centerline under any geometry `Options` combination — the discovery row is
+    the negative `no_stable_centerline` there, while 2024–2027 expose the
+    reference and carry the measured `mep_centerline_rejected_by_dimension_api`.
+    The centerline probe accepts exactly one uniform measured branch per run,
+    and the link-refusal probe stages its own `RevitLinkInstance` (a same-year
+    copy, never-saved model) when the fixture ships without one.
+- **Typed, verified 2D detail production.** Two new tools close the gap real use
+  reported in 2026-08-04 ("the bridge can model a building and annotate it, and
+  cannot draw a line on a sheet"):
+  - `horizun_query_detail_2d` (read-only): one view's drawable resources - line
+    styles, filled-region types with `IsMasking` read from each type, placeable
+    view-based symbols with activation state - and its existing detail elements
+    with normalised geometry and deterministic 0.1 mm signatures. Resources are
+    never resolved by name: every answer is ids, so ambiguity cannot happen.
+  - `horizun_detail_2d`: atomic batches of detail lines, arcs (two unambiguous
+    forms), polylines under one key, filled and masking regions (both
+    type-vs-operation mismatches refused, from the type's own flag), view-based
+    detail components and generic annotations (activated inside the
+    transaction), and line-style edits over existing curves or same-batch keys.
+    Loops are proven pure before Revit is asked - closed, non-degenerate,
+    non-self-intersecting, exactly one exterior containing every hole, in exact
+    integer arithmetic on the signature grid. The rehearsal CREATES the batch
+    provisionally and rolls it back; the token binds views, types, styles and
+    normalised geometry; the apply verifies everything inside a TransactionGroup
+    and rolls the whole batch back on any failed check. Coordinates are
+    view-plane, and a non-zero third component is refused rather than silently
+    projected.
+- **What the dimension live bring-up measured, folded back into the product:**
+  Revit materialises dimension references and values only for a DISPLAYED view -
+  so `horizun_annotate` requires the active view for dimension operations,
+  refused at plan time naming `horizun_navigate` as the fix; computed facts
+  (values, `AreReferencesAvailable`, EQ) materialise after commit+regenerate, so
+  creation AND `horizun_edit_dimensions` verify after a materialising
+  regeneration inside the still-open TransactionGroup; the availability flag is
+  computed lazily on instance-geometry references and reopened RFAs, so where
+  every substantive check passes the row stands on substance and reports the
+  flag as observed; a document whose default-type table is wrong falls back to
+  the lowest-id type of the right style; and `NewDimension` refuses MEP-curve
+  centerline references outright, so discovery marks them incompatible with the
+  measured structured code instead of promising a creation Revit will refuse.
+
+- **Dimension production became a verified workflow instead of a primitive.**
+  Four connected surfaces, all typed:
+  - `horizun_get_dimension_references` (new, read-only): semantic discovery of
+    dimensionable references — wall side faces via `HostObjectUtils`,
+    centerlines, grids, levels, reference planes, edges, endpoints,
+    nearest/farthest planar face from an explicit probe point. Every candidate
+    carries its stable representation, the geometry that justified it, a 0.1 mm
+    quantised fingerprint and a structured incompatibility reason; equivalent
+    candidates return marked `ambiguous` instead of one being chosen silently.
+  - `horizun_annotate` (rebuilt dimension path): linear simple and chains,
+    angular, radial, diameter, arc-length, spot elevation/coordinate. The dry
+    run CREATES the batch provisionally and rolls it back — `constructible` is
+    Revit's answer, and the reported rollback status is Revit's too. The token
+    binds view, effective dimension type (materialised default included), every
+    reference's stable representation, owner and geometry fingerprint, and the
+    measured value; drift refuses as `stale_plan`. Apply verifies in a
+    still-reversible state inside a TransactionGroup and rolls the WHOLE batch
+    back on any failed check, `expected_value` included. Closed outcome set:
+    `committed_verified`, `rolled_back`, `refused`, `stale_plan`, `uncertain`.
+  - `horizun_query_dimensions` / `horizun_edit_dimensions` (new): complete
+    reads, and atomic edits — type, line move, overrides per dimension or per
+    segment, EQ/lock — each read back requested/read/match, stale-refusing,
+    with total rollback.
+  - `horizun_create_family`: family dimensions gained view selection, explicit
+    linear type, lock and EQ; the saved RFA is CLOSED, REOPENED and every
+    dimension re-read from the file on disk before the RFA may be called
+    verified or loaded into the project.
+  What the API does not offer is refused by name rather than imitated:
+  radial/diameter/arc-length on 2023/2024 (the classes arrive in 2025), spot
+  slope everywhere, reference replacement everywhere, linked references, and a
+  leader option on linear dimensions — none of these grants a Python fallback,
+  because Python calls the same absent API. Measured against the RevitAPI.dll
+  metadata of all five installed generations before a line was written.
+- **`horizun_health` reports `revit_language`** — a live-matrix row that cannot
+  say which localization it measured cannot be compared with anybody else's.
+- **`JsonRpcErrorCodeTests` runs the server of its own build configuration**,
+  never the newest binary found lying around: a Debug test run answered by last
+  week's Release apphost was a claim about bytes the run never built. Missing
+  builds fail naming the exact `dotnet build` command.
+
+## v0.9.6 — 2026-08-20
+
+- **Persistent, owner-controlled Python permission.** Revit's **Python ON/OFF**
+  button now grants access until the machine owner explicitly turns it off,
+  instead of expiring after 60 minutes. The permission remains specific to
+  `horizun_execute_python`; read-only profiles, allowlists and denylists still
+  take precedence.
+- **Consent can be requested without sacrificing automation.** MCP clients can
+  call `horizun_request_python_access` to bring the consent prompt to Revit, but
+  they cannot approve it. Once the owner grants access, it remains available
+  across documents and compatible clients refresh their tool list automatically.
+- **Localized consent UI.** The ribbon dialog follows Revit's language: English
+  on English installations, Spanish on Spanish installations, with English as
+  the safe fallback.
+
+## v0.9.5 — 2026-08-20
+
+- **Deep multi-agent hardening.** Typed plan execution now fails closed on
+  partial/rolled-back children; document identity, workset configuration,
+  relinquish, schedule postconditions and Python stream/observer isolation are
+  verified instead of inferred. Host calls, task persistence, images, job
+  records and retention have bounded, durable failure semantics.
+- **Supply-chain and installation hardening.** Pull requests never reach
+  persistent Revit/signing hosts; release hand-offs use immutable artifact IDs;
+  dependencies, the embedded .NET 8.0.30 runtime and all 614 IronPython stdlib
+  files are inventoried/audited. Installation verifies exact hidden/extra files,
+  AddInId identity, reparse confinement and rollback generations.
+- **Official pre-1.0 unsigned release.** SignPath acceptance is still pending.
+  The 0.9.5 installer is therefore disclosed as unsigned, carries full hashes,
+  SBOM and Revit 2023–2027 live evidence, and requires the explicit bootstrap
+  switch `-AllowUnsigned`. This is byte verification, not public publisher
+  authentication; 1.0+ remains fail-closed without public Authenticode trust.
+
+## v0.9.0 — 2026-08-15
+
+- **Public release trust state.** By owner decision, 0.9.0 ships without a
+  publicly trusted Authenticode identity while the SignPath Foundation
+  application is reviewed. The installer, manifest, SBOM, SHA-256 checksums,
+  provenance and Revit 2023–2027 live matrix remain mandatory. Windows/Revit may
+  show an unknown-publisher warning. Starting with 1.0.0, the clean-runner public
+  signature and timestamp gate is mandatory and has no unsigned exception.
+
+- **Release hardening: protocol, durability, installation and public supply chain.**
+  JSON-RPC now enforces the MCP initialization lifecycle and request-id rules; the
+  unsupported MCP Tasks advertisement is gone; stdout failure stops the server
+  instead of reporting a write that never happened. Excel writes claim durable
+  idempotency keys under the workbook lock, replay preserves the complete result,
+  async jobs refuse IDs without a durable record, and opt-in retention removes only
+  terminal records. Packaging is transactional and self-contained, validates the
+  installed result rather than Setup's exit code alone, registers Claude at user
+  scope, preserves unrelated client configuration on removal, and produces an exact
+  CycloneDX 1.6 inventory. Stable publication now requires clean artifacts and live
+  reports for Revit 2023–2027. `horizun_execute_python` is now disabled by default,
+  with an expiring Revit ribbon grant; its evidence remains self-reported and
+  `host_verified` remains false.
+
+- **One effective version, not merely one version file.** Server, add-in, installer,
+  registry metadata and SBOM now inherit `0.9.0` from the repository root. The
+  source-level `Directory.Build.props` explicitly imports that root because MSBuild
+  otherwise stops at the nearest file and silently stamped every source binary as
+  `1.0.0`. The release tests resolve the effective MSBuild property for both projects
+  and inspect the packaged binaries, so filename and embedded version cannot drift.
+
+- **The 0.9 live gate exercises valid Revit structures.** The parametric-family
+  rehearsal now preserves the outer profile-loop array when PowerShell serializes
+  it. Compound system types apply and verify layer wrapping only on exterior or
+  interior shell layers: Revit reports core layers as participating but rejects the
+  wrapping setter on those same layers, so a core layer is treated as effectively
+  non-wrapping and `wraps=true` there is refused before a transaction starts.
+
+- **`execute_python` devuelve los diálogos que Revit levantó, y el script puede leerlos
+  MIENTRAS corre (5.25).** El bridge cancela los diálogos modales —correcto: no hay nadie
+  al teclado— y lo único que le llegaba al script era el `Opening was canceled.` de Revit.
+  Medido: 3 modelos sin auditar y sin causa el 2026-08-13, después de 4 el 2026-08-07. La
+  captura existía desde siempre; el registro no viajaba hasta quien lo necesitaba. Ahora la
+  respuesta trae `dialogs` y `failures` junto a `__output__` (y como `detail` estructurado
+  cuando el script falla), más `revit_raised_observed`: una corrida que nadie vigiló no puede
+  leerse como una corrida tranquila. Pero la respuesta llega tarde para un lote —el script
+  escribe su veredicto por modelo DURANTE la corrida—, así que `revit_raised(since)` lee el
+  mismo registro desde DENTRO: `len(revit_raised())` antes de abrir, ese mismo número después,
+  y lo que vuelve es exactamente lo que levantó ESA apertura. Cada registro trae `while`, que
+  es el último `checkpoint()` del propio script: la forma honesta del campo que pedía el
+  reporte, porque el bridge no puede ver qué llamada estaba en vuelo y lo dice. El extra
+  opcional llegó ACOTADO, no como interruptor de script entero: `with dialog_answer('dismiss'):`
+  alrededor de UNA llamada — un dismiss global responde OK a todo, y Revit lee OK en el diálogo
+  de cerrar-con-cambios como GUARDAR, así que una auditoría de solo lectura podría haber
+  escrito en 250 modelos. (La forma del registro vive en `RaisedRecord`, libre de Revit y con
+  tests: la ventana `since` y la distinción observado/tranquilo. El prelude es Python y ahora
+  vive en `ScriptPrelude.cs`, donde un motor IronPython real lo parsea en los tests — encontró
+  un bug de verdad: Python MANGLEA un nombre con doble guion bajo referenciado dentro de una
+  clase, y `dialog_answer` habría fallado en cada uso.)
+
+- **`horizun_file_info` devuelve la FIRMA de los 8 primeros bytes cuando el header no se
+  deja leer (5.26).** El mensaje de Revit para ese caso ofrece dos causas y las dos hablan de
+  archivos de Revit, así que un ZIP renombrado `.rvt` se lee como "un formato más nuevo".
+  Costó dos diagnósticos falsos seguidos sobre los mismos dos archivos: "es un Revit más
+  nuevo" (escrito en la documentación de un cliente el 2026-08-07 y creído seis días) y luego
+  "la descarga se corrompió" (se volvió a bajar y llegó byte por byte idéntica, 337.648.956
+  bytes, coincidiendo con el `storageSize` de la API de la nube). La respuesta apareció al
+  leer ocho bytes a mano: `50 4b 03 04`. Ahora vienen en `signature`, con `signature_means` en
+  lenguaje llano y `is_revit_container`; el resumen cuenta `not_revit_files`. `d0cf11e0a1b11ae1`
+  es el contenedor OLE de un `.rvt` de verdad —el único caso donde la historia de la versión
+  vale— y `504b0304` es un ZIP, que no es un modelo. Cualquier otra firma vuelve en hexadecimal
+  y NO se interpreta. No es un caso aislado: un barrido de 3.252 archivos encontró 1.193 así en
+  40 proyectos. (Regla en `FileSignature`, libre de Revit y con tests, incluyendo lo que debe
+  negarse a decir.)
+
+- **`execute_python` acepta `code_path`: un `.py` en la máquina, no solo una cadena (5.27).**
+  Un driver de 535 líneas / 26 KB tenía que llegar como un stub que leyera y compilara su
+  propio archivo: tres intentos, dos perdidos en errores de IronPython que no le enseñan nada a
+  nadie (`'charmap' codec can't decode byte 0x8f in position 2634`, porque `open()` usa cp1252
+  y el driver lleva tildes; después `TypeError: expected IList[Byte], got str`). Exactamente uno
+  de `code` / `code_path`, y el handler es la puerta que dice cuál de los dos errores se cometió.
+  El archivo se lee del lado del HOST, así que no evade nada: el límite de 200.000 caracteres,
+  `submitted_source_sha256` y la huella de idempotencia miden los bytes leídos, y `run_async` lo
+  lee UNA vez, al encolar (una corrida diferida debe ejecutar el script del que se tomó su
+  huella, no lo que haya en esa ruta veinte minutos después). El decode respeta BOM, luego una
+  línea PEP-263 `# coding:`, luego UTF-8 ESTRICTO — un archivo que no decodifica se RECHAZA
+  nombrando el byte y el offset, porque un decode indulgente compila y después corre un script
+  que nadie escribió. Y el motor recibe la fuente CON NOMBRE, así que los tracebacks dicen
+  `hz_driver.py:214` y no `<string>`. (Regla en `PythonSourceText`, libre de Revit y con tests.)
+
+- **`__revit__` existe en el ámbito del script (5.28).** El reporte pedía exponer `app`; `app`
+  (el `Application`) y `uiapp` (el `UIApplication`) ya estaban inyectados, siempre lo estuvieron.
+  El hueco real es el que nombraba el propio error y nadie leyó como hueco: `__revit__` —como lo
+  llaman pyRevit y RevitPythonShell— no existía, así que lo primero que escribe quien viene de
+  cualquiera de los dos responde `NameError`, que se lee como que el bridge no tiene objeto de
+  aplicación. Ahora es alias de `uiapp`, y la descripción nombra cada variable inyectada y QUÉ es
+  cada una.
+
+- **Nuevo comando tipado `horizun_acc_upload_status` — ¿subido a ACC o pendiente? (5.15).**
+  Copiar a la carpeta del Desktop Connector y hashear la copia prueba la CACHÉ LOCAL,
+  no la nube: la subida es un paso asíncrono posterior que falla bajo throttling
+  ("Too many people or processes…", circuit breaker de ~11 minutos) — medido en campo:
+  3 de 8 familias sin subir en silencio, detectadas solo por una captura humana. El
+  único registro local que responde la pregunta es el WAL del propio conector
+  (`*.properties-log.db`): al completarse una subida, el `Name` aparece junto a un
+  `ParentFolderUrn`; mientras está pendiente o fallida, no. Un script externo probó la
+  lectura; ahora es un comando del bridge. Acepta `names` y/o `paths` (se usan los
+  basenames), `project_id` opcional convierte cada hallazgo en URL de ACC Docs, y
+  `wal_root` cubre instalaciones no estándar. Dos líneas de honestidad en la respuesta:
+  un hallazgo es el TESTIMONIO del conector leído en esta máquina, no una consulta a la
+  API de la nube; y una ausencia es ausencia de EVIDENCIA, nunca prueba de ausencia —
+  pendiente, fallida o subida con otro nombre se ven idénticas desde aquí. Un log que
+  no se puede leer se reporta por archivo y declara los contadores como cotas
+  inferiores. Org-neutral donde el script no lo era: los nombres son argumento, ningún
+  prefijo de cliente va compilado. Read-only, no toca ningún modelo, no necesita
+  documento abierto. (Parseo y matching en `AccUploadWal`, libre de Revit y con tests;
+  el comando lee los logs con el share mode que el conector exige — la misma lección
+  de 5.12.)
+
+- **Nuevo comando tipado `horizun_file_info` — triage de carpeta sin abrir nada (5.20).**
+  Leer formato/versión guardada, `is_workshared`, `is_central`, `is_local` y ruta de
+  central de una lista de archivos o de una carpeta entera, DESDE DISCO con
+  `BasicFileInfo`, sin abrir ninguno y sin documento activo. Es lo primero que hace
+  cualquier lote, y hasta ahora se escribía a mano en `execute_python` cada vez —
+  peor, había que crear un proyecto en blanco solo para satisfacer el chequeo de
+  documento activo. Acepta `paths` (lista) o `folder` (barrido por `pattern`, default
+  `*.rvt`, `recursive` opcional); los explícitos primero, luego la carpeta, dedup sin
+  distinguir mayúsculas, tope de 2000 con aviso. Cada archivo nombra su propio
+  `read_error` cuando no se puede leer; el resumen cuenta legibles/ilegibles/ausentes.
+  Nada se abre, nada se actualiza. Read-only. (La regla de qué archivos leer vive en
+  `FileInfoPaths`, libre de Revit y con tests; el lector `BasicFileProbe` necesita la
+  API de Revit.) Esto levanta el freeze de herramientas para este comando por decisión
+  del dueño.
+
+- **`on_open_dialog: cancel | dismiss` en las aperturas (5.22).** Cancelar por
+  defecto es correcto y sigue siendo el default: un modelo que no abre desatendido
+  es un hallazgo. Pero 6 de 123 modelos de un lote no se podían auditar porque su
+  apertura levanta un diálogo cuya única respuesta desatendida sensata es "reconocer
+  y continuar", y no había forma de decirlo por llamada. Con `dismiss`, `open_document`
+  y el `open` de `document_session` responden OK/continuar al diálogo de apertura y lo
+  registran en `revit_said`; es best-effort (un diálogo cuyo "continuar" no es el botón
+  por defecto se anota como respondido en vez de proceder a ciegas) y está acotado a la
+  llamada de apertura — cualquier otro diálogo sigue cancelándose. La regla de parseo
+  vive en `OpenDialogPolicy`, libre de Revit y con tests; un valor mal escrito es un
+  error, no un cancel silencioso.
+
+- **El servidor barre discovery huérfano al arrancar (5.24).** Un archivo de
+  discovery (`revit-<año>-<pid>.json`) lo escribe un Revit vivo y lo borra al salir;
+  uno que crashea —o lo matan pasando un modal— nunca llega a borrarlo. El add-in ya
+  barría, pero SOLO al publicar el suyo, es decir cuando arranca un Revit: si el
+  servidor levanta tras un crash y no hay Revit nuevo, nada limpiaba el huérfano y el
+  siguiente comando tropezaba con él. Ahora el servidor barre al arrancar, decidiendo
+  QUÉ archivos con la MISMA regla que el add-in (`DiscoverySweep`, libre de Revit,
+  con sus dos negativas: los nombres legacy de dos segmentos jamás se tocan, y un pid
+  vivo conserva su archivo). Una sola fuente de verdad para las dos mitades.
+
+- **`self_reported_verified` deja de ser un status que el puente rechaza (5.23).**
+  El clasificador aceptaba `verified|completed_unverified|partial|failed`; un script
+  que declaraba `self_reported_verified` —la palabra que TODA la documentación y cada
+  disclaimer del puente popularizan para esto mismo— caía en la rama de status
+  desconocido y se DEGRADABA con una advertencia que nombraba una lista que lo omitía:
+  la jerga contradiciéndose, rechazando una palabra que ella misma enseña. Ahora es un
+  status declarado, con la MISMA vara que `verified` (checked=true + evidence, si no
+  downgrade), y se registra tal cual. Nunca sube una afirmación: sigue sin existir
+  `verified` para Python.
+
+- **`revit_said` ahora viaja también por la ruta async (5.21).** La ruta síncrona
+  adjunta `revit_said` —advertencias, errores y diálogos modales cancelados— junto
+  al payload en cada respuesta (`PipeEnvelope`). La async escribía solo
+  `result.Data` en el record del job, así que esa telemetría —la que diagnosticó el
+  caso más difícil del 2026-08-07, un `Dialog_Revit_DocWarnDialog` cancelado más los
+  errores que Revit levantó antes— existía para una llamada síncrona y desaparecía
+  para el mismo trabajo enviado por `run_async`, que es justo como corren los lotes:
+  4 modelos caídos quedaron sin diagnóstico por esto. `Job.Result` ahora guarda
+  `revit_said` en el evento `result` (construido EXACTO como `PipeEnvelope`, misma
+  forma en ambas rutas), `RunOneAsync` lo serializa —también en fallo, porque suele
+  ser la razón— y `horizun_job_status` lo expone como hermano de `result`. Ausente
+  significa "Revit no levantó nada", igual que en síncrono, nunca "se perdió".
+
+- **Un modal se devuelve como RESULTADO, no como timeout (5.19).** Medido
+  2026-08-07: un diálogo "New Project" abierto costó 600 s a cada una de tres
+  llamadas a `horizun_health` — 30 minutos para enterarse de lo que el log del
+  puente dijo en el primer segundo ("it never started"). Revit solo atiende el
+  ExternalEvent cuando está ocioso y un modal significa que nunca lo estará;
+  el hilo del transporte NO está bloqueado, así que ahora la espera va en
+  rebanadas de 1 s y entre rebanadas pregunta a `ModalProbe` (Win32: la ventana
+  principal deshabilitada + la ventana visible y habilitada del hilo de UI).
+  Un diálogo que persiste 3 sondeos consecutivos — la regla es `ModalSighting`,
+  libre de Revit y con 7 tests, porque un solo avistamiento puede ser un
+  diálogo que `Interference` ya estaba cancelando — se responde YA, con el
+  diálogo nombrado y la petición sacada de la cola: "NEVER STARTED, nada se
+  escribió". Una petición que ya arrancó nunca se abandona por sondeo; el
+  timeout final ahora nombra el modal visible si lo hay. Y en el servidor,
+  `horizun_health` tiene techo propio de 30 s: es el comando de diagnóstico, y
+  no contestar rápido ES la respuesta — el respaldo para cuando la sonda no
+  puede mirar. Una sonda que no capturó sus datos degrada exactamente al
+  comportamiento anterior.
+
+- **`document_session` close puede activar el señuelo por dentro (5.13).** La
+  API de Revit no cierra el documento ACTIVO, y el baile del señuelo — abrir un
+  documento que no quieres para desplazar al que sí — lo hacía el humano: tres
+  veces en una sesión el 2026-08-05, dos más el 2026-08-07 a escala de lote,
+  donde el último modelo de 54 quedó abierto y relanzar el lote se lo saltó.
+  `activate_other: true` hace el baile dentro del comando: activa otro
+  documento abierto (el primero cuya ruta exista en disco — uno detached no
+  puede reabrirse por su ruta sintética) o, cuando no hay otro, abre el ANCLA
+  propia del puente (`.horizun\anchor\HZ_ANCHOR_<año>.rvt`, un proyecto vacío
+  creado una vez y reutilizado), y REPORTA cuál activó y cómo. La decisión es
+  `ActivationChoice` (libre de Revit, 8 tests, incluidos los estados que un
+  Revit vivo no produce a demanda: todos los documentos detached, lista nula).
+  La activación se afirma midiendo — el activo posterior ya no es el objetivo —
+  nunca por "no lanzó excepción"; ocurre después de todos los rechazos (una
+  petición rechazada no te cambia el documento activo de camino) y antes del
+  cierre. `activate_other` entra en `PlanFields`: un rehearsal aprobado sin él
+  no autoriza una ejecución que además cambia de documento. Apagado por
+  defecto: la activación cambia lo que el usuario está mirando y se pide, no
+  se hereda.
+
+## v0.8.0 — 2026-08-05
+
+La versión que v0.7.0 dijo ser. Sus notas presumían el rollback arreglado y la
+verificación viva pendiente; esta lleva ambas cosas hechas de verdad, más lo que
+una jornada de uso real y las probes vivas encontraron. MINOR porque
+`geometry_check` gana campos nuevos (`types_renamed`, `types_renamed_note`).
+
+- **La mentira del rollback vivía en once sitios, no en dos.** v0.7.0 corrigió
+  `execute_plan` y `annotate`; un barrido encontró el patrón idéntico en nueve
+  comandos más — `RollBack()` llamado, su `TransactionStatus` descartado, y el
+  caso limpio afirmado en prosa — y, peor, **tres campos `transaction_status`
+  que eran literales**, no mediciones (`write_params` y `bind_shared_param` los
+  reportaban desde dentro del handler de `SilentRollbackException` teniendo el
+  estado real en la excepción). Los once pasan ahora por `Guard.RollBack` y una
+  sola frase compartida (`PlanFailure.SingleTransactionOutcome`); un estado
+  distinto de `RolledBack` se lee como INCIERTO y nombra lo que no debe
+  asumirse. Dos guards nuevos impiden la duodécima: ningún comando puede llamar
+  `RollBack()` a pelo ni asignar el nombre del estado como literal — ambos
+  dispararon en su primera corrida y destaparon seis archivos más.
+
+- **`family_apply` ya no tropieza con su propio renombrado (5.11).** Pedir
+  `family_name` renombra el tipo superviviente, y la comparación de forma
+  emparejaba por nombre: el comando devolvía `changed` con
+  `dimensions_compared: 0` sobre el trabajo que se le acababa de encargar —
+  medido en 9 familias reales, en 0.5.0 y otra vez en 0.6.1. Ahora la
+  comparación recibe el mapa de renombrados que el comando MISMO ejecutó (solo
+  si se pidió, no fue creación y la llamada no falló) y empareja la forma de
+  antes bajo el nombre de después. Nada se adivina: un tipo que desaparece sin
+  renombrado declarado sigue siendo `removed`, y un renombrado declarado no es
+  por sí solo un cambio de forma. Campos nuevos `types_renamed` y
+  `types_renamed_note`.
+
+- **El servidor perdía el diagnóstico de rollback un salto antes del cliente.**
+  El forwarder de errores de `Program.cs` no llama a `McpResult.FromPluginReply`
+  (la función que los tests ejercitan) y botaba `reply["detail"]`: el add-in
+  calculaba la traza estructurada, el pipe la llevaba, y el cliente nunca la
+  veía. Segunda ocurrencia del mismo patrón que ya perdió el veredicto del
+  fallback en el camino de éxito; guardado igual, sobre el fuente de Program.cs.
+  Medido: la probe viva pasó de UNVERIFIED a PASS con esta única línea.
+
+- **`clash` adopta el marcador canónico de cobertura.** Su frase de cobertura
+  incompleta usaba redacción propia ("AS COORDINATED"); ahora lleva `DO NOT READ
+  AN ABSENCE`, la misma frase que scan, audit y quantities enseñan a buscar.
+
+- **Retroalimentación de una jornada real, convertida en trabajo.** El reporte
+  crudo (9 familias reales contra Revit 2025) está en
+  `docs/feedback-from-use-2026-08-05.md`; sus hallazgos son las historias
+  5.12–5.18 del backlog, con sus medidas.
+
+### Verificación de esta versión — en vivo esta vez
+
+Estáticos: 466 + 235 tests en verde; seis compilaciones (servidor + add-in
+2023–2027) con 0 advertencias y 0 errores. **Vivo, contra Revit 2026 y un solo
+binario:** el tier de escritura commiteó y releyó del modelo
+(`created_verified`), la probe de rollback probó con TRAZA ESTRUCTURAL que el
+grupo arrancó, la acción válida commiteó, la inválida fue alcanzada,
+`rollback_status=RolledBack` y el modelo quedó sin residuo; y las cinco probes
+de workset cerrado pasaron contra un modelo workshared real con un workset
+cerrado — 0 FAIL / 0 UNVERIFIED en la unión de ambas corridas.
+
+## v0.7.0 — 2026-08-05
+
+Dos mitades. La primera es el cambio de dirección de producto de la sección de
+abajo: `horizun_execute_python` pasa de excepción bloqueada a **ruta de ejecución
+de respaldo**, habilitada por defecto. La segunda son las correcciones que salieron
+de auditar esa entrega antes de publicarla — cada una nombrada por el defecto que
+arregla, no por la función que añade.
+
+- **Un rollback fallido ya no se afirma sin comprobarlo.** `horizun_execute_plan`
+  llamaba a `TransactionGroup.RollBack()` y devolvía la frase fija "EVERY action was
+  rolled back" **sin leer el `TransactionStatus` que ese RollBack devuelve**. Un
+  estado distinto de `RolledBack` (`Pending`, `Error`) significa que el modelo quedó
+  en un estado INCIERTO, no limpio, y el mensaje afirmaba lo limpio siempre. Ahora un
+  plan fallido devuelve un diagnóstico estructurado en `structuredContent`:
+  `transaction_group_started`, `transaction_group_status`, `rollback_attempted`,
+  `rollback_status`, `rollback_confirmed` y un `execution_trace` por acción con su
+  índice, key, tool, success y error. `rollback_confirmed` se calcula del estado
+  FINAL del grupo, y sólo `RolledBack` lo concede; cualquier otro conserva su
+  incertidumbre y lo dice en la prosa. Se añadió `Guard.RollBack`, que reporta el
+  estado real en vez de suponerlo, y la misma afirmación falsa se corrigió en
+  `horizun_annotate`.
+
+- **La probe viva del rollback podía dar un falso PASS.** Aprobaba con (hubo error
+  AND el conteo del modelo no cambió) — condiciones que también cumple un rechazo por
+  token stale o por confirmación, donde el TransactionGroup **nunca llegó a empezar**.
+  Ahora exige, como DATOS y no como texto: que el grupo arrancara, que la primera
+  acción se ejecutara con `success=true`, que la segunda fuera alcanzada y fallara,
+  que `rollback_status` sea `RolledBack`, y que el conteo del modelo antes y después
+  coincida. Un rechazo previo al grupo se reporta explícitamente como "prueba
+  validación, no rollback".
+
+- **Firma, manifiesto e instalador dejan de poder mezclarse.** `sign.ps1` firmaba
+  `src/…/bin/…/horizun-mcp.exe` —una copia que nunca se empaqueta— y **nunca firmaba
+  `horizun-mcp.dll`**, que es donde vive el código del servidor (el `.exe` es un
+  apphost). Además el manifiesto se calculaba ANTES de firmar, y firmar cambia los
+  bytes, así que describía archivos que ya no existían; `-InstallerOnly` no lo
+  recalculaba ni lo revisaba. Ahora se firma el **stage** (exe, dll y cada
+  `Horizun.Revit.dll` por año), el manifiesto se **recalcula después de firmar** con
+  hashes, tamaños, estado de firma y thumbprint del firmante, y `pack.ps1
+  -InstallerOnly` **se niega a construir** si algún byte del stage no coincide con el
+  manifiesto. `verify-release.ps1` comprueba además que los binarios propios lleven
+  firma de verdad, de un solo certificado, y que el firmante en disco sea el que el
+  manifiesto declara.
+
+- **`script_sha256` se renombra a `submitted_source_sha256`** (respuesta de
+  `preflight`). El nombre viejo prometía identificar "el script" y no cubría imports,
+  `exec`/`eval` ni un archivo leído en tiempo de ejecución; el campo nuevo lo declara
+  explícitamente en `submitted_source_sha256_covers`. **`script_sha256` sigue
+  presente con el mismo valor**, depreciado según la política de esta versión: se
+  mantiene dos releases MINOR y no se retira antes de 0.9.0.
+
+- **El rechazo por tamaño deja de enseñar a evadirlo.** Un script por encima del
+  límite recomendaba "ponlo en un archivo y léelo desde un script corto" — lo que
+  evade el límite, el hash del código enviado y su vínculo con la clave de
+  idempotencia a la vez. Ahora dice por qué el límite existe y propone reducir o
+  partir el trabajo.
+
+- **La contradicción de idempotencia async, resuelta.** La respuesta de `run_async`
+  afirmaba que "un reinicio olvida cada clave, así que un reintento vuelve a ejecutar
+  el script", cuando el dispatcher ya usa un ledger DURABLE que reclama la clave en
+  disco antes de ejecutar y **reproduce** la respuesta tras un reinicio. La autoridad
+  única es ese ledger; el ledger en memoria queda documentado como capa subordinada
+  para la carrera intra-proceso. Una clave cuyo resultado terminal nunca se escribió
+  queda `in_doubt` y no se vuelve a ejecutar: el riesgo residual es un resultado que
+  hay que inspeccionar, nunca una segunda ejecución.
+
+- **Ningún atajo para conceder el fallback.** Se eliminó `CommandResult.FailUnsupported`,
+  fábrica pública que concedía el permiso sin pasar por la decisión central ni ver el
+  resto del lote. Las razones de incapacidad pasan a ser un **conjunto cerrado**
+  validado en `FallbackSignal.Allowed` y en `UnsupportedCapability`: una razón
+  inventada falla en el sitio del throw en vez de viajar como un string que ningún
+  cliente puede discriminar.
+
+- **Un fixture declarado y jamás consumido es un defecto.** `VoidFamilyDocument`
+  aparecía como parámetro, en `fixtures_present` y en el JSON de ejemplo, pero su
+  único consumidor (`family_mirror_void`) estaba retirado: anunciaba una cobertura
+  inexistente. Se eliminó, y un test nuevo falla si cualquier fixture declarado deja
+  de ser consumido por una probe.
+
+- **`docs/security-model.md` ya no llama "verified" a Python.** Decía que el camino
+  de respaldo terminaba "executed and verified in Python"; la ruta Python no es
+  host-verificada nunca.
+
+### Verificación de esta versión
+
+Estáticos: 454 tests de Core y 234 de Server en verde, y seis compilaciones
+(servidor más el add-in para Revit 2023–2027) con 0 advertencias y 0 errores. La
+cadena `pack → sign → manifiesto → instalador → verify-release` se ejecutó completa
+y sus comprobaciones de firma e integridad pasan.
+
+**Lo que NO se verificó en vivo, dicho aquí porque callarlo sería el defecto que esta
+versión corrige:** el tier de escritura contra un Revit real (`-WriteProbes`), la
+probe de rollback con su traza estructurada, y las cinco probes de workset cerrado.
+Se corren sobre fixtures desechables y quedan pendientes; hasta que existan, esta
+versión no reclama "0 FAIL / 0 UNVERIFIED" en vivo.
+
+---
+
+Cambio de dirección de producto: `horizun_execute_python` pasa de excepción
+bloqueada a **ruta de ejecución de respaldo**, habilitada por defecto.
+
+- **Los valores por defecto son la superficie completa.** Sin `settings.json`, o
+  con uno que no traiga esas claves, se lee `permission_profile=unsafe_code` y
+  `enable_execute_python=true`: una instalación nueva anuncia Python en
+  `tools/list`. Una elección **explícita** (`read_only`, `safe_write`,
+  `full_write`, `enable_execute_python=false`) se respeta siempre — los defaults
+  solo llenan la ausencia. Y se conserva una asimetría deliberada: un archivo que
+  existe pero **no parsea** cae CERRADO (`read_only`, Python apagado), porque
+  puede ser una restricción explícita corrupta y un byte dañado no debe convertir
+  "esto lo apagué" en "todo está encendido".
+
+- **Política de fallback automático**, escrita donde un cliente la lee: en las
+  `instructions` del servidor y en la descripción de la herramienta. Tipado
+  primero cuando cubra el caso completo; cuando no exista capacidad tipada, o una
+  herramienta tipada se niegue **antes de escribir**, el LLM genera Python mínimo
+  y lo EJECUTA en lugar de responder "no soportado". Dos límites duros: nunca
+  tras una escritura tipada que falló a mitad (pudo escribir parcialmente — un
+  reintento es una segunda escritura), y no detenerse a pedir aprobación cuando
+  objetivo, documento, alcance y criterio de éxito ya son inequívocos.
+
+- **El veto por solape tipado pasa a ser un aviso.** Un script que llama a una
+  API que un comando tipado ya hace y verifica recibe `typed_alternatives`
+  nombrando el comando, y **corre igual**. El veto obligaba a partir una
+  operación compuesta en dos transacciones o a rendirse; la recomendación
+  conserva el valor sin el bloqueo.
+
+- **Contrato de evidencia en `__output__`, autorreportado y no acreditado.** El
+  host **no** relee el modelo tras código arbitrario, así que no puede certificar
+  nada que un script afirme: el estado más fuerte de esta ruta es
+  `self_reported_verified`, junto a `completed_unverified`, `partial` y `failed`.
+  **En la ruta Python no existe `verified`**, `host_verified` siempre es false, y
+  un `status: verified` sin `verification.evidence` se degrada a
+  `completed_unverified` diciendo por qué. `script_reported_status` conserva lo
+  que declaró el script. La distinción es la que sostiene el contrato de
+  honestidad: el "verified" de una escritura tipada es un hecho que el puente
+  releyó; el de un script es testimonio. Una versión anterior devolvía `verified`
+  a secas para cualquier script que lo dijera y adjuntara una lista no vacía, lo
+  que hacía `{"evidence":["ok"]}` indistinguible de una relectura real.
+  `print()` sigue funcionando como compatibilidad. Plantilla y recetas en
+  [`docs/python-fallback-recipes.md`](docs/python-fallback-recipes.md).
+
+- **El fallback es decidible por máquina, no por redacción.** Un rechazo tipado
+  previo a escribir puede traer un bloque estructurado —
+  `fallback: {recommended_tool, allowed, reason, write_started}` — en
+  `structuredContent` y repetido en el texto del error. `allowed: true` solo se
+  emite cuando ninguna capacidad tipada cubre lo pedido **y** no se escribió nada;
+  el invariante `allowed=true ⇒ write_started=false` se valida en el constructor,
+  no se confía. Sin bloque, o con `allowed: false`, el cliente no debe caer a
+  Python. La incapacidad viaja como tipo (`UnsupportedCapability`) para sobrevivir
+  al catch que aplana todo lo demás a un string. Cubre hoy `horizun_create_elements`
+  (kind), `horizun_annotate`, `horizun_transform_elements` y `horizun_manage_views`
+  (operation).
+
+- **El aviso de solape tipado se enmascara con el lexer de Python.** Un
+  `# ElementTransformUtils.MoveElement` en un comentario generaba un aviso falso.
+  Ahora se tokeniza con `TokenCategorizer` —servicio público del DLR que **lexa
+  sin ejecutar**— y se blanquean comentarios y literales; el escáner a mano queda
+  como respaldo si el tokenizer no está disponible o la fuente no lexa (falla
+  suave: un aviso nunca puede impedir una corrida). **Límite documentado:** un
+  f-string es un solo token de cadena, así que una llamada dentro de `f"{...}"`
+  también se enmascara y no genera aviso — dirección conservadora y fijada en los
+  tests. Sigue siendo aviso, no bloqueo.
+
+- **Un lote mixto ya no concede el fallback.** Antes bastaba con que UNA acción
+  fuera una incapacidad para que toda la solicitud devolviera `allowed: true`,
+  aunque otra acción del mismo lote tuviera argumentos inválidos — permiso cierto
+  de una entrada, publicado para la llamada entera. Ahora la decisión es una pieza
+  pura y central (`FallbackDecision`) que exige las tres condiciones: nada escrito,
+  al menos una incapacidad, y que **todos** los fallos sean incapacidades. El lote
+  mixto recibe `allowed: false` con `reason: mixed_capability_and_invalid_input`
+  más `capability_gaps` por índice: un mapa, no una licencia.
+
+- **Auditoría de incapacidades tipadas con inventario probado.** Cada rechazo
+  estructural de `src/Horizun.Revit/Commands` está clasificado como concedido,
+  argumento corregible o posterior a escritura, con su razón escrita; un escáner
+  falla si aparece uno sin clasificar, si una fila queda obsoleta, o si un comando
+  sin fila concedida empieza a emitir fallback.
+
+- **Transporte probado como valores, no como texto fuente.** El ensamblado del
+  sobre del pipe (`PipeEnvelope`) y del resultado MCP (`McpResult`) se extrajeron
+  para que las pruebas construyan un `CommandResult` y lean el JSON que llegaría
+  al cliente. Una señal perdida en serialización es indistinguible de una que
+  nunca se concedió, y el cliente deja de caer a Python en silencio.
+
+- **`preflight=true`**: valida permiso, documento objetivo, tamaño, SHA-256 del
+  script y sintaxis **sin ejecutar**, y devuelve advertencias detectables. No
+  gasta clave de idempotencia (no muta) y no se combina con `run_async`. Declara
+  explícitamente lo que no puede: demostrar la seguridad o el efecto de código
+  arbitrario.
+
+- **`enable-execute-python.ps1` sigue existiendo como herramienta de
+  administración** — re-habilita o restaura una instalación apagada
+  explícitamente, y apaga con `-Disable`. Ya no es el único modo de activarlo.
+
+- **Riesgo aceptado, dicho en `docs/security-model.md`**: el default amplía la
+  superficie expuesta. Una máquina que procese contenido no confiable o corra
+  desatendida debería apagarlo explícitamente.
+
+## v0.6.1 — 2026-08-04
+
+Cortada el mismo día que v0.6.0, sobre ella:
+
+- **El set de requisitos como datos** (`docs/requirement-set.md`): el esquema
+  que hace verificable ISO 19650 / IFC / COBie sin una línea de código por
+  estándar, con su test de aceptación escrito.
+- **`execution.taskSupport`** emitido por herramienta, derivado del contrato —
+  `optional` exactamente para lo que `horizun_submit_job` acepta.
+- **Política de releases** (`docs/RELEASE-POLICY.md`): ventana de deprecación de
+  dos MINOR, ningún campo se reutiliza jamás.
+- **Fe de erratas de este archivo**: los `.csproj` de esta versión salieron
+  diciendo `0.6.0` — la etiqueta y el binario no coincidían. Corregido, y ahora
+  un check de CI compara la etiqueta contra `<Version>` para que no vuelva a
+  pasar en silencio.
+
+## v0.6.0 — 2026-08-04
+
+Endurecimiento, no superficie: cero herramientas nuevas, y en cambio las
+garantías que una release debe poder demostrar sobre sí misma.
+
+- **El servidor MCP se registra como `horizun-revit`**, no `horizun` a secas, para
+  leerse como lo que es en la lista de servidores de un cliente junto a
+  civil3d-mcp, navisworks y el resto de puentes. Afecta a `install.ps1`, a la
+  página final del instalador, al `-Name` por defecto de
+  `register-client.ps1`/`verify-clients.ps1` y a toda la documentación de
+  instalación. Un registro existente con el nombre viejo no se renombra solo:
+  quítalo y vuelve a añadirlo, o pasa `-Name horizun` para conservarlo.
+
+- **Guard de solape tipado en `execute_python`.** Un script que hace exactamente
+  lo que un comando tipado y verificado ya hace es redirigido a ese comando, con
+  la razón: qué comprueba el comando que un script no puede comprobar sobre sí
+  mismo. El escape hatch sigue siendo el escape hatch; deja de ser un duplicado
+  silencioso de lo verificado.
+
+- **Activación de `execute_python` en un paso, hecha para una persona.**
+  `scripts/enable-execute-python.ps1` muestra qué estás aceptando, escribe
+  exactamente las dos claves (`permission_profile` + `enable_execute_python`),
+  conserva el resto de la configuración y se revierte con `-Disable`. Sigue
+  apagado de fábrica y ningún agente debe encenderlo por ti.
+
+- **`verify-live.ps1` gana un nivel de ESCRITURA (`-WriteProbes`).** El nivel por
+  defecto sigue sin tocar nada; el nuevo COMMITEA contra un modelo que el
+  archivo de fixtures declara desechable, relee el resultado del modelo y nunca
+  guarda. Existe porque tres comandos llegaron a review con toda su batería
+  unitaria en verde y ninguno podía hacer su trabajo: las refusals prueban los
+  guards, los dry runs prueban la aritmética, y solo un commit prueba el
+  comando. Con dos llaves independientes (el switch y el fixture), y sin ambas
+  cada probe sale NOT COVERED con su motivo.
+
+- **Regla nueva del contrato: una escritura tipada cuya verificación falla debe
+  REVERTIR.** Reportar el fallo con honestidad no basta: un comando que commitea
+  y luego dice que no pudo confirmar deja al llamador un modelo que desenredar a
+  mano. Está en CONTRIBUTING como regla dura y en el nivel de escritura como
+  probe que recorre cada respuesta y nombra a los infractores.
+
+- **La maquinaria de publicación vuelve al árbol privado.** El export por
+  allowlist y la política que implementa se perdieron al reemplazar main el
+  2026-08-02 y sobrevivían solo en una rama; restaurados sin cambios. El escaneo
+  de nombres vuelve a estar limpio sobre todos los archivos trackeados.
+
+- Backlog: Épica 4 — estándares como datos, no compilados. El estándar llega
+  como requirement set versionado; el puente mide y nunca juzga; cada hallazgo
+  nombra el comando tipado que lo arreglaría. ISO 19650, IFC/buildingSMART y
+  COBie entran como tres documentos contra un solo comando, desde el día uno.
+
+## v0.5.0 — 2026-08-01
+
+Esta versión apunta directamente al benchmark de operaciones tipadas,
+interoperabilidad, familias y distribución; no suma herramientas por contar.
+
+### Creación BIM y documentación
+
+- `horizun_create_elements` añade cielos rasos, cubiertas por huella con
+  pendiente, bandejas portacables, vigas/arriostramientos y columnas
+  estructurales. Conserva lote heterogéneo atómico, ensayo, confirmación y
+  relectura de clase/tipo estructural.
+- `horizun_manage_views` añade plantas de cielo y estructura, vistas de detalle,
+  secciones y elevaciones; siguen componiéndose con alias dentro de una sola
+  transacción.
+
+### Familias
+
+- Nuevo `horizun_create_family`: compila una familia cargable desde una plantilla
+  RFT con parámetros, fórmulas, tipos y valores por tipo; formas sólidas o vacías
+  de extrusión/blend/revolución/barrido/swept blend; planos de referencia,
+  cotas etiquetadas, líneas simbólicas/de modelo y RFA anidados por punto con
+  propagación de parámetros; asociación paramétrica de
+  offsets, ángulos, material y visibilidad; y conectores de tubería, ducto, electricidad, conduit
+  y bandeja alojados en una cara seleccionada por normal. Guarda y verifica el
+  RFA, puede cargarlo al proyecto y relee la `Family` cargada.
+- Nuevo `horizun_manage_system_types`: duplica y parametriza tipos de sistema
+  residentes en proyecto dentro de una transacción. En tipos host de muro, piso,
+  cubierta y cielo puede reconstruir la composición homogénea completa: capas
+  ordenadas exterior-interior, función, material, espesor, envolvente, límites
+  shell/núcleo, capa estructural/variable y deck. Relee clase, nombre, valores y
+  toda la composición después del commit.
+- Se documenta el límite real: la API pública de Revit no ofrece creación
+  general de familias in-place. No se simula con automatización frágil de UI.
+
+### IFC, Navisworks, FBX y Power BI
+
+- `horizun_export` añade NWC nativo por modelo o vista y FBX de una o varias
+  vistas 3D. IFC expone versión, cantidades base, partición muro/columna,
+  límites espaciales y filtro de vista. Todos atribuyen éxito solo a archivos
+  no vacíos realmente nuevos o modificados.
+- Nuevo `horizun_power_bi_push`: inserción directa en tablas de semantic models
+  push, en My workspace o un workspace. Credenciales solo desde variables de
+  entorno; endpoint fijo de Microsoft; límites 10.000 filas/75 columnas/4.000
+  caracteres; token temporal o service principal de Entra.
+- Power BI comparte la garantía durable de como máximo una vez: un reintento
+  idéntico reproduce la respuesta; una conexión perdida después del envío queda
+  `in_doubt` y no duplica filas automáticamente.
+
+### Instalación y benchmark
+
+- `install-release.ps1` selecciona una release, descarga setup y
+  `SHA256SUMS.txt`, verifica el SHA-256 completo y solo entonces ejecuta el
+  instalador. No necesita Git ni SDK.
+- El setup incluye registrador y verificador para Codex/Claude. La opción es
+  explícita: respalda las configuraciones, conserva los demás MCP y se niega a
+  editar un cliente abierto que pueda sobrescribir el cambio.
+- `docs/BENCHMARK.md` publica casos, puntuación y grados de evidencia. El
+  instalador sigue sin firma de una CA pública; por eso distribución no recibe
+  puntuación perfecta.
+
+El contrato compartido cambió: servidor y add-in 0.5.0 deben desplegarse juntos.
+
+## v0.4.0 — 2026-08-01
+
+Esta versión cambia el foco de “más comandos” a **operaciones generales,
+componibles y verificables**.
+
+### Superficie BIM general
+
+- `horizun_query_model` consulta host y vínculos cargados con filtros de
+  categoría, familia/tipo/nombre/nivel, parámetros y caja 3D; proyecta campos,
+  agrupa resultados y usa cursores que detectan cambios del modelo.
+- `horizun_create_elements` crea en un solo lote niveles, ejes, muros, pisos,
+  habitaciones, instancias de familia, ductos, tuberías y conduit.
+- `horizun_transform_elements` mueve, copia, rota, fija y cambia tipos;
+  `horizun_manage_views` crea vistas, planos y colocaciones; `horizun_annotate`
+  crea texto, tags y cotas con referencias estables; `horizun_export` produce
+  PDF/DWG/IFC/imagen/CSV y verifica los archivos realmente escritos.
+- `horizun_navigate` devuelve selección, encuadre y apertura de vista a la UI
+  de Revit sin fingir una confirmación visual que la API no expone.
+
+### Composición y trabajos largos
+
+- `horizun_execute_plan` encadena hasta 100 comandos tipados en un
+  `TransactionGroup`. Un paso puede usar un valor exacto anterior mediante
+  `${clave.ruta}`; si cualquier paso falla, se revierte el grafo completo.
+- `horizun_submit_job` abre la cola async a cualquier comando instalado del
+  lado Revit. Devuelve `job_id` de inmediato; `horizun_job_status` distingue
+  queued/running/ok/failed/not_started o muerte del proceso.
+
+### Seguridad e idempotencia
+
+- Toda mutación y cambio de sesión exige una clave de idempotencia **durable**.
+  El claim se escribe antes de ejecutar y el resultado terminal después. Un
+  reintento idéntico tras reiniciar reproduce la respuesta sin ejecutar; una
+  clave reutilizada con otros argumentos se rechaza; un claim cortado por un
+  crash queda `in_doubt` y nunca se repite automáticamente.
+- Perfiles `read_only`, `safe_write` (predeterminado), `full_write` y
+  `unsafe_code`, más `allowed_tools`/`denied_tools`. Python exige a la vez
+  perfil `unsafe_code` y `enable_execute_python=true`.
+- Se corrigió una incompatibilidad introducida durante el endurecimiento:
+  Python síncrono ya acepta —y exige— la clave durable universal.
+
+### MCP y honestidad de resultados
+
+- Negociación MCP hasta `2025-11-25`, conservando compatibilidad con
+  2024-11-05/2025-03-26/2025-06-18. Todas las herramientas anuncian
+  `outputSchema`, título y anotaciones de lectura/destrucción/idempotencia/
+  mundo abierto; las respuestas exitosas llevan `structuredContent` y el JSON
+  serializado en texto para clientes antiguos.
+- Export ya no atribuye archivos ajenos que cambiaron simultáneamente en la
+  carpeta; la plantilla de vista se verifica contra el ID exacto solicitado; la
+  verificación de curvas transformadas tolera la inversión de extremos con la
+  que Revit normaliza geometría equivalente.
+
+- Los resúmenes de `horizun_query_model` normalizan nombres vacíos de categoría
+  o nivel como `(blank)` y consolidan nombres que solo difieren por mayúsculas.
+  Aunque ambas formas son JSON válido, clientes reales como Windows PowerShell
+  5.1 no pueden materializarlas y descartaban la respuesta completa. La prueba
+  viva consulta ahora todas las categorías para cubrir estos casos con datos reales.
+
+El contrato compartido cambió: servidor y add-in 0.4.0 deben desplegarse juntos.
+
+## v0.3.5 — 2026-08-01
+
+### Cola FIFO para todas las llamadas de Revit
+
+- **Las llamadas concurrentes ya no se rechazan por estar ocupado Revit.** Una
+  operación sigue ejecutándose a la vez —la API de Revit continúa siendo de un
+  solo hilo—, pero hasta 16 solicitudes adicionales esperan en orden FIFO. El
+  límite es backpressure deliberado: una cola sin límite convertiría un bucle o
+  una tormenta de reintentos en horas de mutaciones futuras aceptadas en silencio.
+
+- **Cada respuesta JSON mide su espera.** `bridge_queue.queued` informa si había
+  otra llamada del puente delante al admitirla; `waited_ms` mide además la espera
+  hasta que el hilo UI de Revit quedó disponible. También informa capacidad y
+  tiempo total de espera más ejecución.
+
+- **Cancelar antes de empezar significa que nunca corrió.** El servidor envía
+  una orden de control autenticada por una conexión separada; el add-in elimina
+  la solicitud bajo el mismo lock de la cola y despierta a su dueño con
+  `cancelled_before_start`. Si ya entró al hilo de UI, no afirma cancelarla: la
+  API de Revit no puede interrumpir ese trabajo.
+
+- **Sin starvation entre colas.** Las llamadas normales y los trabajos
+  `run_async` alternan cuando ambas colas tienen trabajo. Un flujo continuo de
+  lecturas no puede dejar eternamente esperando una mutación async, ni al revés.
+
+- **Cierre y errores terminales drenan con verdad.** Si Revit se apaga o
+  `ExternalEvent.Raise()` responde que no llegará ningún callback, todas las
+  solicitudes todavía en espera se despiertan como `NEVER STARTED`; no quedan
+  conexiones bloqueadas ni operaciones que puedan arrancar después.
+
+- **El heartbeat dejó de llamar “running” a lo que quizá está en cola.** Ahora
+  dice que espera una respuesta de Revit y que desde el proceso MCP no puede
+  distinguir todavía entre espera FIFO y ejecución. No inventa estado.
+
+- **La concurrencia tiene una prueba viva reproducible.**
+  `scripts/verify-queue-live.ps1` comprueba posiciones de admisión y orden FIFO,
+  cancela una escritura de marcador todavía en espera y verifica fuera de Revit
+  que el archivo nunca apareció. Después ocupa los 16 slots y demuestra que la
+  llamada 17 recibe backpressure mientras las 16 aceptadas terminan normalmente.
+
+## v0.3.4 — 2026-08-01
+
+Los botones de pyRevit se vuelven herramientas. **Nueve** de los doce de la
+extensión "Horizun AEC" pasan a ser comandos `horizun_*` de primera clase; dos son
+**imposibles** de portar con lo que hay, y uno se deja fuera a propósito.
+Además, cuatro comandos cierran el primer flujo nativo de tablas de planificación
+y consulta federada de elementos vinculados.
+
+**EL CONTRATO SE MOVIÓ** — trece comandos nuevos —, así que las dos mitades hay
+que actualizarlas juntas.
+
+### Añadido
+
+- **Tablas de planificación nativas y vínculos.** `horizun_create_schedule`
+  crea una `ViewSchedule` real con campos, orden, itemización e
+  `IncludeLinkedFiles`; empieza en `dry_run`, exige documento objetivo y token,
+  y después del commit relee la tabla y sus campos. `horizun_list_schedules` y
+  `horizun_get_schedule_data` inspeccionan la definición y las celdas que Revit
+  muestra, con límites y truncamiento explícitos. `horizun_list_elements`
+  pagina por categoría a través del anfitrión y los vínculos cargados, conserva
+  el modelo e instancia de origen y reporta los vínculos no cargados en vez de
+  convertirlos en un cero falso.
+
+- **Recetas: el álgebra en Python, la honestidad en C#.** Estas geometrías llevan
+  meses corriendo contra modelos reales; reescribirlas en C# no las haría más
+  correctas, reiniciaría su historial de bugs en cero. Así que el algoritmo se
+  queda en Python (`Recipes\*.py`, junto al DLL) y `Core\Recipe.cs` se queda con
+  todo lo que decide si la respuesta es verdad: la transacción y su
+  `Guard.Commit`, el `dry_run` — que **no abre transacción en absoluto** —, la
+  relectura **después del commit** y un bloque `Guard.Verify` por cantidad
+  contada. Una receta que dice 40 contra un modelo que reporta 37 **falla la
+  llamada**. Una receta no puede abrir su propia transacción: se comprueba en
+  ejecución y en CI. Y no es un rodeo a `enable_execute_python` — ese ajuste
+  regula código que **llega de quien llama**, y aquí no llega nada: el nombre se
+  resuelve contra una carpeta fija, `..` y separadores se rechazan, y el fichero
+  lo instaló el mismo deploy que instaló el DLL. El sha256 de la receta que
+  **realmente** corrió viaja en cada respuesta.
+
+- **Nueve herramientas nuevas**: `horizun_split_floor_loops`,
+  `horizun_split_multilayer_walls`, `horizun_split_multilayer_slabs`,
+  `horizun_ungroup_and_mark`, `horizun_regroup_by_param`,
+  `horizun_copy_slab_elevations`, `horizun_embed_floors_in_toposolid`,
+  `horizun_grade_toposolid_around_floors` y `horizun_rectangularize_walls`.
+  Todas con `dry_run` **por defecto TRUE**, `target_document` obligatorio y token
+  de confirmación de un solo uso.
+
+- **Los dos gigantes se portaron COPIANDO el fuente, no reescribiéndolo.**
+  "Rectangularizar muros" (2.051 líneas) y "Grading TopoSolido" (1.267) se
+  copiaron tal cual y se editaron: cabecera, argumentos en vez de diálogos, la
+  transacción al host y `plan/apply/verify`. La geometría queda **idéntica byte a
+  byte**, que es justo el objetivo — un puerto reescrito reinicia el historial de
+  bugs, y transcribir dos mil líneas a mano lo garantiza. Ambos conservan su `doc`
+  de módulo, que los puntos de entrada enlazan al documento que resolvió el host:
+  es seguro porque el puente corre **un comando a la vez** y rechaza el segundo en
+  vez de encolarlo.
+
+### Arreglado — defectos que traían los botones, no el puerto
+
+Un botón puede permitirse esto porque hay alguien mirando. Una herramienta que
+llama un agente, no.
+
+- **El partidor de muros convertía un muro CURVO en su CUERDA, y reportaba
+  éxito.** `offset_curve()` construía cada capa con `Line.CreateBound` desde los
+  **extremos** de la directriz. En un muro recto es exacto; en uno en arco es la
+  cuerda — el muro se mueve, y nada lo decía. Ahora los muros curvos se
+  **rechazan** en `plan()` con el motivo. Rehacerlos bien es otro algoritmo, y no
+  uno que este puerto tenga derecho a inventar.
+
+- **Se borraban originales PINEADOS.** Revit responde "está intentando eliminar
+  elementos pineados", y un aviso que nadie contesta es un modal que retiene el
+  hilo de UI hasta que quien llama expira. Su propio botón hermano (Separar
+  losas) ya despineaba antes. Ahora lo hacen los tres.
+
+- **Reagrupar barría anotación hacia un Model Group.** Un grupo de modelo no
+  puede contener un elemento view-specific, y Revit rechaza la llamada **entera**
+  con un `ArgumentException` que no nombra a nadie: una sola etiqueta suelta hacía
+  fallar el botón por completo. Ahora se excluyen y se **listan**, y el resto sí
+  se agrupa.
+
+- **Reagrupar limpiaba el parámetro DESPUÉS de agrupar.** Escribir un parámetro en
+  un elemento que ya está dentro de un grupo es justo lo que levanta el modal de
+  grupo. Ahora se limpia **antes**: mismo estado final, sin modal, y si el
+  agrupado falla el host revierte la limpieza con él.
+
+- **Desagrupar descubría demasiado tarde que el parámetro no existía.** Desagrupaba
+  primero y luego intentaba marcar; si el parámetro no estaba, el modelo quedaba
+  desagrupado **y sin marcar** — irrecuperable, porque la pertenencia al grupo ya
+  no existía. Ahora se muestrea a los miembros **antes** de tocar nada.
+
+- **Partir losa perdía el offset de nivel**, dejando cada losa partida en la cota
+  del nivel. Ahora se copia y se reporta.
+
+- **"Adquirir Elevaciones" rechazaba una losa fuente legítimamente alabeada.**
+  Aceptaba la fuente solo si exponía más de cuatro vértices ("no parece tener una
+  forma editada") — pero una losa rectangular con **una esquina levantada** tiene
+  exactamente cuatro vértices y SÍ está alabeada: la losa deformada más común del
+  mundo, rechazada con un mensaje que decía que no lo estaba. Ahora se juzga por si
+  la forma realmente varía: más vértices que su contorno, O cotas distintas entre
+  vértices, O split lines.
+
+- **"Adquirir Elevaciones" reducía cada arista curva a su punto inicial.** Tomaba
+  solo `GetEndPoint(0)` de cada curva del contorno, así que un arco aportaba un
+  punto y el polígono del destino cortaba recto por la panza: los puntos se
+  probaban contra una forma que no es la losa. Ahora las curvas se **teselan**, y
+  los destinos afectados salen nombrados en `curved_boundary_note`.
+
+- **"Adquirir Elevaciones" reseteaba la forma del destino en silencio.** Es la
+  operación correcta (dos alabeos no se fusionan), pero el botón no decía nada. El
+  dry run ahora lista exactamente qué losas van a **perder** su forma existente.
+
+- **Una losa mala ya no tira el lote.** `split_multilayer_slabs` corre cada losa en
+  su propia `SubTransaction`: la que falla revierte **sola**, sin dejar geometría a
+  medias, y se reporta por id.
+
+- **Los instaladores no copiaban `Recipes\`.** Exactamente la omisión que en 0.3.3
+  dejó la cinta sin iconos — pero peor: un icono que falta degrada a botón sin
+  imagen, mientras que una receta que falta es una herramienta que `tools/list`
+  anuncia, el dispatcher acepta y **falla al usarla**. `pack.ps1` ahora **aborta**
+  si el payload no lleva tantas recetas como produjo la compilación, y los deploys
+  reportan cuántas aterrizaron releyéndolas del disco.
+
+### No portado, y por qué
+
+- **"Pases de nivel" y "Revertir Pases" son imposibles con lo entregado.** Ambos
+  scripts son cáscaras: dicen en su propia cabecera que *"toda la lógica vive en
+  la librería compartida `iec_pases` (extension/lib)"*, y ese `lib/` **no viene en
+  el zip** ni está en el disco. No hay nada que auditar ni que portar hasta que
+  aparezca el módulo.
+
+- **"Nivelar TopoSolido" (v1) se deja fuera A PROPÓSITO, y lo dice su propio
+  sucesor.** La cabecera de "Nivelar Topo V2" enumera las "diferencias clave con
+  v1" y entre ellas está la razón: v1 fusiona losas con **booleanas de sólidos**, y
+  *"el kernel booleano de Revit falla con losas que solo se tocan por el borde"* —
+  justo el caso que la herramienta tiene que resolver. V2 lo reemplazó por
+  cancelación de bordes en 2D. Montar la versión que su autor ya había sustituido
+  sería publicar un modo de fallo conocido con una etiqueta `horizun_`. Su
+  capacidad está cubierta por `horizun_embed_floors_in_toposolid`.
+
+## v0.3.3 — 2026-07-31
+
+La versión que se puede regalar. El puente se prepara para ser público —
+gratuito, Apache-2.0, parte del ecosistema Horizun Hub — y eso pidió tres cosas
+que ninguna auditoría de código habría pedido: que se vea, que diga de dónde
+viene, y que se instale desde el fuente sin descargar un solo ejecutable.
+
+**El contrato NO se movió**: ninguna descripción de comando cambió, así que las
+mitades de 0.3.2 y 0.3.3 emparejan entre sí. El bump es de producto, no de
+protocolo.
+
+### Añadido
+
+- **Una pestaña propia en Revit: "Horizun Hub", panel "Horizun RVT MCP".** El
+  add-in corrió headless toda su vida — un pipe, un fichero de descubrimiento y
+  un log — y esa forma correcta para un puente tenía un coste que nadie había
+  pesado: en una máquina donde funciona, no hay manera de saberlo. *Invisible no
+  se distingue de ausente.* El botón **Estado del puente** lee el fichero de
+  descubrimiento **desde disco**, no un campo en memoria: la pregunta es si un
+  cliente MCP podría conectar ahora mismo, y eso es lo que un cliente lee.
+  Responde versión, commit, árbol limpio o no, y enlaza el log y el Hub. La
+  cinta se construye ANTES que el puente y no depende de él — si el pipe falla,
+  la pestaña es lo único que puede decírselo a alguien que mira Revit y no un
+  log. Su propio fallo se registra y se traga.
+
+- **El puente dice de dónde viene, en los tres sitios donde es visible.** El
+  handshake MCP devuelve `instructions` (el slot que el protocolo reserva para
+  esto): el contrato, que `health` va primero, y que el puente es neutral por
+  diseño — los estándares no están aquí y no hay que inventarlos.
+  `horizun_health` devuelve `horizun_hub`, que nombra esa misma propiedad como
+  algo sobre lo que quien llama actúa: un comando al que "le falta" un catálogo
+  no está roto. Y el instalador publica la URL del Hub donde Windows la
+  reenseña después. El acceso directo del navegador es **opt-in y desmarcado**.
+
+- **`install.ps1`: instalación desde el fuente, sin ejecutables.** El camino
+  para un agente (Claude Code, Codex) o una persona tras clonar el repo:
+  detecta los Revit instalados por su propia `RevitAPI.dll`, compila cada año
+  contra su API, compila el servidor, **primera instalación incluida** (el caso
+  que los scripts de deploy rehúsan), todo stageado antes de instalar nada,
+  libro de deshacer, y verificación releyendo cada binario instalado.
+  `AGENTS.md` documenta el procedimiento completo para el agente.
+
+### Arreglado
+
+- **Los iconos de la cinta no se desplegaban.** `Install-HorizunPayload` y el
+  staging de `pack.ps1` copiaban `*.dll` y `lib/` y nada más, así que el primer
+  deploy de la cinta envió botones sin imagen — y `Ribbon.cs` degrada un icono
+  ausente a botón plano, que es exactamente por qué nada falló y nadie fue
+  avisado. Ambas copias llevan ahora `Resources/`.
+
+## v0.3.2 — 2026-07-31
+
+Una entrada. La encontró un lote de 31 modelos, no una lectura del código.
+
+**EL CONTRATO SE MOVIÓ**, así que las dos mitades hay que actualizarlas juntas: el
+hash cubre las descripciones y la de `horizun_job_status` cambió. Un Revit en 0.3.1
+hablando con un servidor 0.3.2 se refusa en el hash — en voz alta, que es lo
+correcto, pero no hay despliegue parcial que valga.
+
+### Arreglado
+
+- **`job_status` no distinguía "corriendo" de "el proceso murió", y sí podía.**
+  Medido el 2026-07-31 auditando 31 modelos desde ACC: Revit se cayó **tres veces**
+  y las tres el comando respondió `"running"` con *"or the process died […] this
+  will not guess"*, mientras `Get-Process` llevaba ocho minutos sin Revit. Cada
+  caída costó los minutos que tardó alguien en sospechar y salir del MCP a
+  preguntarle a Windows.
+
+  La negativa a adivinar era correcta **sobre lo que un log puede saber**, y ese
+  era el error: el log no era la única fuente. El registro del job lo escribe un
+  proceso concreto, y preguntarle al sistema operativo si ese pid sigue existiendo
+  no toca Revit — exactamente igual que leer el log desde disco, que es lo que este
+  comando ya hacía.
+
+  El evento `start` estampa ahora el **pid**, y la respuesta trae `pid` y
+  `process_alive`. El texto se parte según lo que se sabe: con el proceso **vivo**,
+  "running o colgado, mira `seconds_since_last_event`" — la ambigüedad *real* se
+  conserva, porque un paso lento y un cuelgue son indistinguibles desde un log. Con
+  el proceso **muerto**, "este job no va a terminar nunca", que es un hecho; y avisa
+  de que lo ya checkpointeado **sí ocurrió**, así que relanzar es una segunda
+  escritura y no una recuperación. Un `queued` con el proceso muerto tampoco va a
+  correr nunca, y ese **sí** es seguro de reenviar — el consejo contrario al del
+  `queued` con Revit vivo, que es justo la distinción que justifica el campo.
+
+  Los registros anteriores al estampado del pid conservan la frase antigua: ahí la
+  vida del proceso genuinamente no se puede saber, e inventarla sería la suposición
+  que este comando existe para rechazar.
+
+  La liveness la decide `PipeClient.IsRevitAlive`, la **misma** que usa el
+  descubrimiento: dos chequeos con dos reglas terminarían discrepando.
+
+  `run_async` sigue siendo **at-most-once**. Esto no relanza Revit ni reintenta
+  nada; solo dice lo que ya se podía saber.
+
+## v0.3.1 — 2026-07-31
+
+Hotfix. Two of these are defects 0.3.0 introduced, and the first one is the worse
+kind: a guard that did not protect the thing it was added for, it removed the
+command instead.
+
+### Fixed
+
+- **The close confirmation could never be spent.** `discard_unsaved` was one of the
+  fields the plan hash was computed over. A rehearsal is sent *without* it — that is
+  what makes it a rehearsal — and the execution is sent *with* it, so the two hashes
+  could never match. Every token came back `PlanChanged`, and a document with unsaved
+  changes could not be closed **at all**, by anyone. The distinction the code was
+  missing: that list is the PLAN (what will be done, and to what); `discard_unsaved`
+  is the APPROVAL. An approval that must appear inside the thing being approved is a
+  circle, and this made the fourth command in this codebase to ship with it.
+
+  The test that shipped beside the bug built **one** request object and hashed it
+  twice, which is not the sequence and cannot fail on it. There is now a test that
+  sends the two requests a caller actually sends.
+
+- **`horizun_clash` measured workset coverage for the host only.** A clash is a
+  statement about a *federated* model, and the host is one document among several:
+  the structural link can have three worksets closed while the host has none, and
+  the check would report full coverage over a model it had seen half of. The link is
+  where the other discipline lives, which makes it both the likelier place for this
+  and the one that matters more. Coverage is now measured per source — host and each
+  loaded link — and **any** source that is incomplete or unreadable makes `result`
+  `partial`.
+
+- **`deploy-both`'s rollback left new files behind.** It moved the originals back and
+  stopped. Any file the new release *adds* that the old one did not have was copied
+  in and never removed, so a "successful" rollback produced a directory that was
+  neither release: every old file restored, plus strangers — under a message saying
+  the machine was as it was before the run. It now removes what the run brought in
+  before restoring what it moved aside.
+
+## v0.3.0 — 2026-07-31
+
+Ten defects, all of the same family: a guard that read as stronger than it was.
+None of them announced itself, and most were only visible by crossing two files
+that each looked correct alone.
+
+### Fixed — guards that were weaker than they read
+
+- **`PlanHash` sorted every array before hashing it**, on the reasoning that a set
+  in another order is the same set. `write_params_verified` takes a list of
+  **operations**, and two writes to the same parameter apply in order — the last
+  one wins — so `[{Width:3.5},{Width:9}]` and `[{Width:9},{Width:3.5}]` leave the
+  model in two different states and hashed identically. A token issued for the
+  rehearsal of one was spendable on the execution of the other, which is the
+  single substitution the confirmation exists to refuse. The arithmetic moved to
+  `Confirmation.cs`, which carries no Revit, so it is now provable without a
+  building.
+
+- **The session's Revit target was two static fields written one after the
+  other.** The server answers requests on several threads on purpose, so a call in
+  flight could read the pid of the new target beside the year of the old one — and
+  a pid wins, so the command went to the instance the caller *used to* be pointed
+  at and the reply looked entirely correct, about the wrong model. It is one
+  immutable value now. `horizun_target` also accepted a pid **and** a year and
+  silently resolved it in favour of whichever branch ran last, which was the year:
+  a caller passing a pid precisely to escape ambiguity got the ambiguity. Refused.
+
+- **The two open commands ran different guards.** `horizun_document_session` had
+  **no central guard at all** — the tool whose description promises it is "guarded
+  against the irreversible" would open the model everybody synchronizes to without
+  a word, while `horizun_open_document` refused. `open_document` in turn had no
+  newer-file rule, so `allow_upgrade=true` on a file from a later Revit bought
+  Revit's own error about a file format, after the caller had agreed to something
+  irreversible that was never on offer. And only `open_document` could open a
+  cloud model — the command that does not take `expected_version`. One shared
+  guard now, with the rules in a Revit-free decision table where every branch is a
+  test. **A cloud model is a central model**, so it now needs `detach` or
+  `open_central` too.
+
+- **`Close(false)` discarded unsaved work and reported success.** `IsModified`
+  cannot be asked of a closed document and the file on disk is untouched, so an
+  hour of edits and a document nobody had touched produced byte-identical replies —
+  a loss reported as success, undetectable afterwards by anyone including the
+  handler that wrote it. Closing a modified document now needs `discard_unsaved`,
+  a `dry_run`, and a token bound to that rehearsal; every close reports the
+  `IsModified` it measured first. Unknown counts as modified.
+
+- **The MCP writer refused to answer an id it had answered before, forever.**
+  JSON-RPC reserves an id only while its request is outstanding. The second
+  request to arrive with `id: 7` ran in full — the model was touched — and its
+  reply was dropped on the way out, leaving the client waiting for an answer to
+  work that had already happened. Exactly-once now belongs to the request.
+
+- **`stdin.ReadLine()` allocated the whole line before the length check ran.** A
+  client pumping a file into the wrong pipe took the process down, and with it the
+  user's only bridge to Revit. The 4 MB limit is enforced *while* reading, the
+  refused line is drained so the next request starts on a boundary, and the same
+  shared limits now bound the pipe reply and what a script may print.
+
+### Added — how much of the model an answer is about
+
+- **`visibility_coverage` on `model_scan`, `audit_model`, `quantities` and
+  `clash`.** A closed workset's elements are not in the document, so a scan does
+  not skip them — it never sees them — and no count comes back short by a knowable
+  amount. "0 imported CAD instances", "no clashes" and a concrete total were all
+  true statements about what got loaded, presented as statements about the
+  building. Where a command already had a flag for "this answer is not the whole
+  story", a closed workset now reaches it. Unknown counts as incomplete.
+
+### Fixed — deployment and release
+
+- **`deploy-both` was creating the split contracts it exists to prevent.** It
+  defaulted to `-Years 2025,2026`; this machine had five years installed on two
+  different commits because of it. It now finds every `Horizun.addin` on the
+  machine — both Addins roots — builds and stages everything before installing
+  anything, rolls every change back if any step fails, and reads back the commit,
+  clean-tree flag and SHA-256 of every binary that landed.
+
+- **The release manifest covered two files out of the whole payload.**
+  `horizun-mcp.exe` is an apphost; the code that runs is in the `.dll` the
+  manifest never named, alongside Newtonsoft, IronPython and two thousand stdlib
+  files. Everything is hashed now, with the stdlib as one ordered digest.
+
+- **CI's `revit-integration` never downloaded the artifact it claimed to test.**
+  It read `dist/` off the runner. It downloads the package now and re-checks every
+  hash the packaging job recorded, including that it is from this run's commit,
+  before executing the installer.
+
+### Changed
+
+- **Clients register as `horizun`, not `horizun-next`.** The name came from the
+  months when this build was a candidate sitting beside a shipped one. It is the
+  shipped one now, and a default that says "next" makes every session, screenshot
+  and set of instructions disagree with the product's own name. `-Name` still
+  takes anything, which is what it was always for.
+
+## v0.3.0 (previa) — 2026-07-31
+
+*(Esta sección quedó como «Unreleased» cuando se cortó la v0.3.0 y nunca se
+retituló: es el trabajo entre v0.2.0 y v0.3.0, y se publicó con la v0.3.0.)*
+
+### Added — release and cutover tooling
+
+- **`scripts/verify-release.ps1` — one commit, from source to what is running.**
+  The acceptance report recorded twice that "a hash cannot prove a binary came
+  from a commit", which was true and the wrong place to stop: the hash proves
+  *identity*, and the commit stamped into each binary proves *provenance*.
+  Together they answer the question a release asks. Four links, each checked:
+  git HEAD and a clean tree → a manifest naming that commit → every staged file
+  matching by hash **and** stamping that commit → the same for what is installed.
+  The last link is what proves the installer carried the right payload.
+
+  It also catches two things no hash in a manifest reveals: two years sharing a
+  binary (one was built against the wrong `RevitAPI`, invisible in a build log
+  because `bin/` is shared), and an installer older than the payload it wrapped.
+
+- **`scripts/register-client.ps1` — register beside, never instead.** Adds one
+  entry under its own name (`horizun-next` at the time; `horizun` from 0.3.0) to
+  Claude and Codex and touches
+  nothing else; if the write would remove any existing server it restores its own
+  backup and reports the attempt. `-Rollback` undoes it. It **refuses a running
+  client** by default, because both rewrite their config from memory while they
+  run — measured here: `~/.claude.json` was rewritten four minutes into an
+  editing session, which loses the edit silently and looks like a tool that never
+  appeared.
+
+### Changed — release gate
+
+- **`verify-live` emits JSON, and NOT COVERED became an exit code.** It printed
+  four outcomes and returned only three. `not_covered` was a warning at the
+  bottom of a run that exited 0 — so a run that never attempted half its
+  guarantees looked, to any script reading the exit code, exactly like one that
+  established all of them. Exit codes are now `1` failed, `2` unverified, `3` not
+  covered, most-severe first, and `-ReleaseGate` is what makes the third fatal.
+  `-Json` writes every probe with its outcome, the fixtures that were present,
+  and the provenance — written from the same list the console prints from,
+  because two renderings of one run are two things that can disagree.
+
+- **The integration suite runs against the INSTALLED artifact.** `-Server`
+  defaulted to `bin/Release`, so it proved the developer build worked and said
+  nothing about the package anybody installs. It now defaults to the installed
+  executable and **refuses** a `bin/Release` path unless `-AllowDevServer` says
+  deliberately that this run does not speak for the artifact — and that flag adds
+  a `not_covered` entry, so it cannot pass a release gate quietly.
+
+- **Provenance is checked, not merely present.** `horizun_version is non-empty`
+  proves something answered; a stale add-in from three days ago passes it. New
+  probes assert the exact `-ExpectedCommit` with `built_from_clean_tree`, and the
+  full SHA-256 of the installed server and of that year's add-in against the
+  release manifest. A hash that does not match is a **failure**, not a gap: a run
+  against the wrong binary cannot speak for the right one.
+
+- **The manifest carries what identifies a release.** Schema 2: the full 40-character
+  commit, whether the tree was clean, the **server** (which it never mentioned at
+  all), and full SHA-256 per payload instead of a 16-character prefix — a prefix
+  is convenient to read in a log and verifies nothing.
+
+- **`pack.ps1` refuses a dirty tree.** A build from uncommitted changes is stamped
+  `<sha>-dirty`, and a sha with `-dirty` on it names a commit the binary is not.
+  It used to be discovered afterwards by reading `horizun_health` on something
+  already installed; it is now refused before anything is built, listing the
+  files responsible.
+
+- **CI runs the live suite on 2025 *and* 2026**, against the installed package,
+  and publishes the JSON as a workflow artifact `if: always()` — the results of a
+  failed run are the ones somebody actually needs. Fixture names come from a file
+  on the runner rather than the repository, for the reason in
+  the client-name policy; see
+  [docs/live-fixtures.example.json](docs/live-fixtures.example.json).
+
+### Fixed
+
+- **The async lifecycle: a drain nothing called, and two raises whose answers
+  were thrown away.**
+
+  `AsyncQueue.DrainForShutdown()` existed, was correct, and had a passing test.
+  **Nothing called it.** So every job still queued when Revit closed kept an open
+  record — and an open record is reported by `job_status` as the ambiguity it
+  deliberately refuses to resolve, *"still running, or the process died"*, when
+  the truth was known exactly: it never started. No behavioural test could catch
+  that, because the behaviour was never reached. `OnShutdown` now drains, and a
+  source-level test fails if that wire is cut again.
+
+  `ExternalEvent.Raise()` answers, and Revit can refuse. `Dispatcher.Invoke`
+  handled that — a caller is blocked on it. The two places that raise for the
+  **async queue** did not: one logged a warning and carried on, and
+  `RunOneAsync`'s was a bare `_event.Raise();` with the result discarded
+  entirely. A refusal there stranded every *successive* job in a batch silently:
+  the entry that had just run reported itself correctly and the rest sat on a
+  queue nothing would ever pump again, records open. Both go through
+  `AsyncPump.Pump` now, which closes the queue as `not_started` when Revit says
+  no — Denied is not transient, so there is no later raise that would rescue them.
+
+  **`Denied` is a test case now, not a reasoned argument.** The acceptance report
+  recorded it as unverifiable because it "needs a Revit that is shutting down".
+  What made it unverifiable was the logic living inline in a method holding an
+  `ExternalEvent`. Behind `IWorkRaiser` all three answers — and a raiser that
+  throws — are ordinary tests.
+
+- **The async queue is bounded, at 32.** Entries run one at a time on the UI
+  thread, so a queue is a promise about the future: an unbounded one lets a
+  caller in a loop put hours of committed mutations behind a reply that said
+  "queued" in milliseconds. `Add` became `TryAdd` with an explicit refusal —
+  a void add on a bounded queue has two implementations and both are wrong.
+
+- **`job_status` reports five states.** `queued`, `running`, `ok`, `failed`,
+  `not_started` — where there used to be `finished` plus one sentence covering
+  three different situations. The ambiguity is kept only where it is real
+  (`running` genuinely cannot be told from a dead process), and dropped where it
+  never was. A `not_started` job is safe to send again and now says so; a
+  "might be running" one is not, and that difference is the whole point.
+
+- **"Exactly once" is no longer claimed unconditionally.** The reply now names
+  the three things at-most-once rests on and the one it does not cover: a Revit
+  restart forgets every idempotency key, so a retry across one runs the script
+  again.
+
+### Changed
+
+- **`execute_python` is inside the mutation policy now — and is still a
+  privileged bypass.** Two changes and one retraction.
+
+  *It was the only command aimed at whatever window was in front.* Every typed
+  write refuses to act without `target_document`, matched against the **active**
+  document. The command that can do everything the typed writes can, plus
+  everything they cannot, did not. Meanwhile "every mutation validates the
+  document" sat in the acceptance report marked met, on evidence from the seven
+  commands that were checked. A sentence true of the seven and false of the
+  surface is worse than no sentence: it reads as a guarantee. `target_document`
+  is now required and gated by the same `DocumentGate.ForMutation`. The cost is
+  real and stated: a script that needs no document at all can no longer run
+  through this tool.
+
+  *`run_async` was at-most-once only if the request arrived once.* `AsyncQueue`
+  guarantees a queued entry is claimed exactly once, and that was written down as
+  the reason `run_async` is safe to point at a mutation. It is half the story.
+  The other half is the wire: the reply carrying the `job_id` is exactly the
+  message that gets lost, and a client that retries a timeout — the correct thing
+  for a client to do — produced a **second** queue entry, claimed exactly once,
+  for a total of two executions that nothing downstream could tell from two
+  deliberate runs. `run_async` now requires an `idempotency_key` bound to the
+  Revit process id, the document identity, a SHA-256 of the code and every other
+  argument, canonicalised so key order in the JSON does not matter and a changed
+  value does. Same key, same request → the original `job_id`, **nothing queued**.
+  Same key, different request → refused, because silently honouring it would
+  discard the new request while reporting it as deduplicated. Supplying a key
+  *without* `run_async` is refused rather than ignored: a synchronous run keeps
+  no stored answer to replay, so accepting the key would claim a guarantee that
+  does not exist.
+
+  The queued copy carries `target_document` too, and the gate runs again when the
+  UI thread takes the entry — a queued mutation whose target is no longer active
+  must not land somewhere else. It fails into the job record, which is where an
+  async caller reads outcomes anyway.
+
+  *The retraction.* `execute_python` still has no dry run, no plan hash and no
+  confirmation token, so nothing rehearses what it will do, and there is no way
+  to predict the effect of arbitrary code without running it. It is now a
+  **document-scoped privileged bypass** — an accepted risk with named
+  compensating controls, written into [docs/security-model.md](docs/security-model.md)
+  §3a and into the tool's own description where a caller reads it. Horizun no
+  longer claims one uniform typed-mutation policy.
+
+  Nineteen new tests, and the ordering ones assert position rather than presence:
+  a gate that runs after the work is queued is not a gate. Verified to fail
+  against the previous commit — 9 of the 10 source-level checks did, and the
+  tenth exposed a fault in itself first (`IndexOf` returns −1 for absent, and −1
+  is less than every real offset, so it passed with the gate deleted outright).
+
+- **One data root, shared by both halves: `%USERPROFILE%\.horizun\`.** Settings,
+  discovery, jobs and logs each used to compute their own location from
+  `SpecialFolder.LocalApplicationData` — **seven** lines, in two projects that
+  ship separately, that agreed by coincidence. They stop agreeing the moment the
+  two processes resolve that folder differently, which is not exotic: a packaged
+  (MSIX/AppContainer) host redirects `FOLDERID_LocalAppData` into its own
+  per-package cache, and a different user or elevation context is a different
+  profile outright. The MCP server is launched by the MCP client; Revit is
+  launched by the user.
+
+  Nothing errors when they diverge. The server lists an empty directory and
+  reports *"no Revit has published a bridge"* while Revit sits there with the
+  add-in loaded and its own log growing — a symptom that points at everything
+  except the cause.
+
+  `HorizunPaths` is now the single answer, linked into both projects the way
+  `Settings.cs` already was. `horizun_health` and `horizun_target` both report
+  `data_root`, `settings_path`, `discovery_path`, `jobs_path` and `logs_path`,
+  each with **measured** readable/writable — so "the two halves are looking at
+  different folders" is something you can see by putting two replies side by
+  side.
+
+  Corrected in passing, because the first version of this change was written on a
+  wrong premise: `Environment.GetFolderPath` does **not** read `%LOCALAPPDATA%`.
+  Measured on .NET 8 — setting the variable in-process changes the variable and
+  leaves `GetFolderPath` returning the real folder. So the tests written to
+  "simulate the split" by moving that variable would have passed against the old
+  code too. They were replaced by two that fail against the previous commit: the
+  root is asserted not to be under `LocalApplicationData`, and a source scan over
+  everything under `src/` fails if any state path is computed from it again.
+  `%USERPROFILE%` is consulted only as a fallback for the same reason — it is
+  inheritable, and the server is a child process of the client.
+
+  **Upgrading resets `enable_execute_python` to its safe default.** The old
+  `%LOCALAPPDATA%\Horizun\settings.json` is not read and not migrated: absence is
+  OFF, and silently carrying a machine's arbitrary-code-execution posture across
+  a relocation is not a thing an installer should do quietly. Re-state it in the
+  new file. `horizun_health` names the old folder when it still holds files, so a
+  machine mid-migration explains itself.
+
+### Added
+
+- **Revit's objections now reach the caller.** The number one way this kind of
+  automation dies: a transaction commits, Revit raises a warning, a modal dialog
+  opens, and the UI thread stops — not crashed, not finished, waiting for a click
+  nobody is there to give, until the call times out with nothing to show for the
+  work already done. Dialogs are now cancelled so the bridge cannot hang. But the
+  obvious other half — swallow the warnings — is the exact lie this codebase
+  refuses: a warning is Revit telling you something about the model. So every
+  failure and dialog is recorded and returned as `revit_said`, beside the result,
+  with the elements Revit blamed. It travels on FAILURE too, because what Revit
+  objected to is usually the reason. Errors are not auto-resolved: resolving one
+  changes the model, usually by deleting something.
+
+  Proven live: two deliberately overlapping walls produced *"Highlighted walls
+  overlap…"* with both element ids, dismissed so the commit could finish and
+  reported in full — on a call that had failed for an unrelated reason.
+
+- **`horizun_job_status` and `checkpoint()` — watching a long run from outside.**
+  While a long command executes, Revit's UI thread is inside it and the pipe is
+  waiting for it to end, so asking the plugin for progress means asking the thing
+  that is busy. Scripts now call `checkpoint("label", done, total)` with no
+  import; each call reaches disk immediately, and `horizun_job_status` reads that
+  file **host-side, without touching Revit at all**. Verified by querying a
+  running job mid-flight and getting its checkpoints back while the UI thread was
+  blocked.
+
+  The record is append-only and flushed line by line, so a Revit crash at minute
+  twenty leaves everything up to minute twenty — the next run can skip what is
+  already done. A job with no finish record is reported as exactly that and never
+  guessed to be "stalled": a log cannot tell a slow step from a dead process.
+
+- **`horizun_capture_view` — the caller can see.** Everything else here reads
+  parameters and counts elements, which settles what is written down and nothing
+  else: whether a wall landed where it should, why a section looks wrong, whether
+  a sheet reads properly. An automation that cannot look at the model builds on
+  what it never saw. The view is exported as a PNG and the image itself rides back
+  in the response as an MCP image block, not as a path only something with a
+  filesystem could use.
+
+  The honesty problem it exists to solve: `ExportImage` does **not** write the file
+  you ask for. It treats the path as a stem and appends the view type and name —
+  `view.png` came back as `view - 3D View - HZ_3D_Prueba.png` in the first live
+  run. A handler echoing the requested path names a file that is not there. This
+  one exports into a folder of its own, looks at what actually appeared, and
+  reports that: real path, real byte count, and pixel dimensions read out of the
+  PNG header rather than the ones requested. Schedules are refused — Revit cannot
+  raster-export them — instead of reporting a capture that does not exist.
+
+  Verified live in Revit 2026: four walls and a 3D view built for the purpose,
+  captured at 1200×1048, and the image came back legible.
+
+- **`horizun_target` — which Revit is answering, and how to change it.** Two Revit
+  versions open at once is a Tuesday here: a model saved by one year does not open
+  in another, and opening a file can start a second instance on its own. The server
+  picked the newest live bridge and said nothing about it, and the only way to
+  override that was an environment variable read once at process start — set by the
+  MCP client, so choosing a target meant editing a config and restarting everything.
+  A read then answers about the wrong model; a **write lands in it**. This reports
+  every bridge (year, pid, whether that process is still alive, add-in version) and
+  makes the choice switchable inside the session. Host-resident: it reads the same
+  discovery files the router reads and never touches Revit.
+
+- **The server keeps a log.** The plugin has kept one since a silent startup
+  failure proved indistinguishable from "not installed"; this half had none. A
+  stdio server cannot report anything about itself — stdout *is* the protocol and
+  stderr belongs to whoever launched it — so a bad call left nothing on disk to
+  compare a chat message against. `%LOCALAPPDATA%\Horizun\logs\server.log` now
+  records tool names, which Revit each call was routed to, outcomes and durations.
+  Never arguments: those carry model content and file paths.
+
+### Fixed
+
+- **A caller could be handed another caller's result.** The dispatcher kept ONE
+  pending request and ONE completion signal for everybody. After a timeout it
+  returned and released its lock — but a Revit command cannot be aborted from
+  outside, so the work kept running. Three silent failures followed from that, and
+  every reply carried the asking caller's own request id, so nothing downstream
+  could tell:
+
+  1. *Stale wake* — A times out, B starts, A finishes and signals "done", and B
+     returns A's result as its own.
+  2. *Double execution* — an `ExternalEvent` raise that has not fired yet fires
+     later, finds the pending slot overwritten, and runs the NEW request; then the
+     new raise runs it again. For a write, the same edit applied twice.
+  3. *Zombie start* — a request abandoned while Revit sat on a modal starts minutes
+     later against a model the user has moved on from.
+
+  Requests are now objects that own their own completion signal, the UI thread
+  *takes* one exactly once, and an abandoned request is dropped before it can
+  start. While something is in flight new work is **refused** with a description of
+  what is holding the thread and how long it has been there — not queued behind a
+  run that already blew a ten-minute budget. `RequestGate` carries no
+  `using Autodesk.*`, so all three failures are pinned by unit tests instead of by
+  a live run that only a large model would ever reach.
+
+- **One malformed line killed the server.** `id` and `method` were pulled out of
+  each message *before* the guard that catches bad ones. A message whose `id` was
+  an object rather than a scalar threw an uncaught cast on the way in and ended the
+  process — and with it the client's only bridge to Revit. Every step of reading a
+  message is now inside the guard. An id that cannot be echoed is refused as an
+  invalid request and **not dispatched**: a reply nobody can match to a request is
+  not an answer, and doing the work anyway was measurably worse than declining.
+
+- **A long command blocked every later connection.** The accept loop served each
+  request inline before listening again, so while a command held the UI thread a
+  second client sat in its connect timeout and got "the pipe did not answer" — you
+  could not even ask whether Revit was alive. Connections are now accepted
+  concurrently, each on its own thread. Accepting is not permission to run: the
+  dispatcher still admits one command at a time, so the second caller gets a
+  sentence instead of a hang. The header comment claiming this already worked was
+  wrong, which is its own kind of defect in a codebase that sells honesty.
+
+- **The server advertised tools the connected add-in might not have.** The two
+  halves deploy separately, so a server built today routinely meets a plugin
+  installed months ago — on this machine, four Revit years were running a build
+  with 16 commands against a server offering 20. The only symptom was "Unknown
+  command", which reads like a bug in the request. The add-in now publishes its
+  version and its actual command list (discovery schema 2) and the server names the
+  mismatch and the fix. A schema-1 file publishes no list, and that is reported as
+  **unknown, never as "supports nothing"**.
+
+## v0.2.0 — 2026-07-24
+
+### Added
+
+- **Session tools**: `horizun_health` (which Revit is on the other end, our own
+  build, the log path, and the document active right now), `horizun_open_document`,
+  `horizun_save_document`, `horizun_relinquish_all`. 18 tools in total.
+- **`horizun_open_document` refuses an upgrade.** The file's own saved version is
+  read from the file (`BasicFileInfo`, nothing is opened) and compared to the
+  running Revit. A mismatch — or a version that cannot be read — is a refusal
+  unless `allow_upgrade=true`. A batch pointed at the wrong Revit does not fail
+  loudly; it succeeds every time and moves a whole library forward a version.
+- **A log.** `%LOCALAPPDATA%\Horizun\logs\revit-<year>.log`, with stack traces.
+  `OnStartup` has to swallow its exception (throwing takes Revit down), which made
+  a failed install indistinguishable from no install at all.
+- **Installer** (`installer/horizun-mcp.iss`, built by `scripts/pack.ps1`). One
+  setup carrying both plugin runtimes; each Revit year on the machine gets the one
+  it can load. Refuses to run while Revit is open, because Revit holds the files
+  and a partial copy leaves the user running the old build believing they upgraded.
+- **`scripts/verify-live.ps1`** — the half of the test story CI cannot reach. It
+  asserts on what each answer says, refuses a stale discovery file, and prints what
+  it did *not* cover.
+- **`scripts/sign.ps1`** for code signing (certificate supplied by the operator).
+
+### Fixed
+
+- **`execute_python` was broken on .NET Framework** (Revit 2024 and earlier) and
+  nobody knew, because it had never been run there. `ScriptScope` on that runtime
+  carries a second `SetVariable(string, ObjectHandle)` overload; an untyped `null`
+  binds to it, since `ObjectHandle` is more specific than `object`, and it throws
+  `ArgumentNullException`. Fixed with three casts.
+- **`excel_write_rows` left `<dimension>` stale.** The rows were in the file and
+  the tool reported them verified — but a reader that trusts that element, which
+  includes `openpyxl` in read-only mode and therefore `pandas.read_excel`, never
+  saw them. The verification was circular: it re-read with its own parser, which
+  ignores `dimension`.
+- **`catalog_lookup` assumed UTF-8 silently.** A catalog saved as ANSI (what Excel
+  produces on a non-English Windows) lost every accented character to U+FFFD and
+  came back `exists: false` — a fabricated "not in the catalog" that was really "I
+  misread the file". It now decodes strictly, falls back to Latin-1, and reports
+  which encoding it used.
+- **`Reconcile.Compare(NaN, x)` returned `Agree = true`.** `Math.Max(NaN, x)` is
+  `NaN`, `NaN > 1e-9` is false, so it fell into the zero-guard and claimed
+  agreement between a real measurement and none at all. Non-finite input is now
+  `comparable: false`, and `Guard.Reconcile` no longer emits `NaN` into JSON.
+- **IronPython needed the codepage provider registered.** On .NET 5+ codepage 1252
+  is not available unless `CodePagesEncodingProvider` is registered, and the engine
+  dies in a console-less host. It appeared intermittent because the registration is
+  process-global: it worked whenever another add-in had already done it.
+- `confirmed_active` in `open_document` compared document handles by reference and
+  reported a false negative for the document it had just opened.
+
+### Security
+
+- The named pipe now grants `FullControl` to the current Windows user and nothing
+  else. It previously inherited the process token's default DACL, which is reachable
+  by other logged-in users on a shared machine. The auth token already gated every
+  request; this is the second lock.
+
+### Verified
+
+- Live in **Revit 2026 (net8)** and **Revit 2024 (net48)**, 5/5 each. The 2026 run
+  was against the add-in as deployed by the installer, not a developer copy.
+- The upgrade guard was proven against a real family saved in Revit 2023.
+- Both of `open_document`'s guards, live: the version guard, and the central guard
+  refusing a real workshared central until `open_central=true` was passed.
+- `relinquish_all`'s happy path, on a workshared central created for the purpose
+  rather than borrowed from a client: 2 worksets owned before, 0 after,
+  `fully_relinquished: true` — measured on both sides, not assumed.
+- 59 Revit-free tests; CI green on a hosted runner.
+
+### Known limits
+
+- `excel_write_rows` appends below an Excel Table without expanding the table's
+  range (reported per call).
+- The add-in is unsigned: Revit shows its "Security - Unsigned Add-In" dialog.
+  Worth stating precisely, because the obvious assumption is wrong: **signing the
+  DLL does not remove the dialog**. It becomes a "Signed Add-In" prompt naming the
+  publisher, shown once per certificate per machine rather than per binary. No
+  dialog at all additionally requires the publisher's public certificate in the
+  machine's Trusted Publishers store before Revit starts
+  (`certutil -addstore TrustedPublisher`), which is a change to the machine's
+  trust configuration and must be an explicit opt-in during install.
+
+  **Measured the hard way: signing WITHOUT trusting is worse than not signing.**
+  A self-signed certificate was created, the add-in signed and timestamped, and
+  Revit answered with `Security - Invalid Signature` - "This signed add-in has a
+  security problem", Publisher: Unknown, Issuer: None - where the unsigned build
+  had been loading silently. Windows cannot chain a self-signed certificate to a
+  trusted root, and Revit reports that as tampering rather than as "unknown
+  publisher". So the certificate and the trust-store step are one package, not two
+  steps where the first helps a little. Reverted to unsigned; scripts/dev-cert.ps1
+  and scripts/sign.ps1 are ready for the day there is a certificate to trust.
+
+  Measured on this machine, and worth knowing before buying anything: after the
+  add-in was authorised once, roughly eight later rebuilds and restarts loaded
+  with no dialog at all — so on Revit 2026.4 the trust survived new binaries.
+  That contradicts the common claim that every new build re-triggers the prompt.
+  The dialog is a problem for CLIENT machines, not for a developer's own.
+
+## v0.1.0 — 2026-07-24
+
+First tagged state. 14 tools over a clean-room plugin (UI-thread dispatcher over
+`ExternalEvent`, token-authed named pipe, discovery file) and a hand-rolled MCP
+server. `Guard`/`Reconcile` carry the honesty contract: a command may not report
+work it did not verify.
+
+History squashed to a single commit before the repository ever had a remote — the
+development history carried client-specific strings, and rewriting the files alone
+would have left them reachable.

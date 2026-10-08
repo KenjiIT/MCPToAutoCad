@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "dependencies": {
+    ".NETFramework,Version=v4.8": {
+      "IronPython": {
+        "type": "Direct",
+        "requested": "[3.4.2, )",
+        "resolved": "3.4.2",
+        "contentHash": "OPYemSbwfDtgWU24GELr0/ud7uHbNSMAPaTzatWk7Ab7X5xWquDHfQtdiFJ+3j/CoGtj7eOFhkeRYs1o3uZEmQ==",
+        "dependencies": {
+          "DynamicLanguageRuntime": "1.3.5",
+          "System.Memory": "4.5.5"
+        }
+      },
+      "IronPython.StdLib": {
+        "type": "Direct",
+        "requested": "[3.4.2, )",
+        "resolved": "3.4.2",
+        "contentHash": "deehM2JDVnA3JENIaOwjn5HDqMgst7my3loSSfEmQRugCehSntGGIJwY7mxRnNl7a/vEaTeKMNOChStNCUD1pg==",
+        "dependencies": {
+          "IronPython": "[3.4.0, 3.5.0)"
+        }
+      },
+      "Newtonsoft.Json": {
+        "type": "Direct",
+        "requested": "[13.0.3, )",
+        "resolved": "13.0.3",
+        "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
+      },
+      "PdfPig": {
+        "type": "Direct",
+        "requested": "[0.1.13, )",
+        "resolved": "0.1.13",
+        "contentHash": "2AUWNKHbkDr2Ofgi2vVPN/Ya++jhsuHd54xeKveqKOwDiAy2E2QhczOUKyU29ADRHoEJgQUhwHFgtbD6nCZ2WA==",
+        "dependencies": {
+          "Microsoft.Bcl.HashCode": "6.0.0",
+          "System.Memory": "4.6.0"
+        }
+      },
+      "DynamicLanguageRuntime": {
+        "type": "Transitive",
+        "resolved": "1.3.5",
+        "contentHash": "HHCVAlsIe8eBuj0bxh+0zCflYPeu+WSmP5iJ2J+oqd9wa1j7kcw70hiGPxoDPSoLM/RRLGXUdvj7ISkelxLpNw=="
+      },
+      "Microsoft.Bcl.HashCode": {
+        "type": "Transitive",
+        "resolved": "6.0.0",
+        "contentHash": "GI4jcoi6eC9ZhNOQylIBaWOQjyGaR8T6N3tC1u8p3EXfndLCVNNWa+Zp+ocjvvS3kNBN09Zma2HXL0ezO0dRfw=="
+      },
+      "System.Buffers": {
+        "type": "Transitive",
+        "resolved": "4.6.0",
+        "contentHash": "lN6tZi7Q46zFzAbRYXTIvfXcyvQQgxnY7Xm6C6xQ9784dEL1amjM6S6Iw4ZpsvesAKnRVsM4scrDQaDqSClkjA=="
+      },
+      "System.Memory": {
+        "type": "Transitive",
+        "resolved": "4.6.0",
+        "contentHash": "OEkbBQoklHngJ8UD8ez2AERSk2g+/qpAaSWWCBFbpH727HxDq5ydVkuncBaKcKfwRqXGWx64dS6G1SUScMsitg==",
+        "dependencies": {
+          "System.Buffers": "4.6.0",
+          "System.Numerics.Vectors": "4.6.0",
+          "System.Runtime.CompilerServices.Unsafe": "6.1.0"
+        }
+      },
+      "System.Numerics.Vectors": {
+        "type": "Transitive",
+        "resolved": "4.6.0",
+        "contentHash": "t+SoieZsRuEyiw/J+qXUbolyO219tKQQI0+2/YI+Qv7YdGValA6WiuokrNKqjrTNsy5ABWU11bdKOzUdheteXg=="
+      },
+      "System.Runtime.CompilerServices.Unsafe": {
+        "type": "Transitive",
+        "resolved": "6.1.0",
+        "contentHash": "5o/HZxx6RVqYlhKSq8/zronDkALJZUT2Vz0hx43f0gwe8mwlM0y2nYlqdBwLMzr262Bwvpikeb/yEwkAa5PADg=="
+      }
+    }
+  }
+}

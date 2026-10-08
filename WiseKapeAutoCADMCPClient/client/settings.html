@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="vi"><head>
+<!-- design: macrostructure=CAD-workbench theme=paper-workspace -->
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Cấu hình kết nối MCP và Codex cho WiseKape AutoCAD.">
+<title>Cài đặt · WiseKape Workspace</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('uc4n-theme')||'light'}catch{document.documentElement.dataset.theme='light'}</script>
+<link rel="icon" href="/assets/brand.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/workspace.css">
+<style>
+.settings-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.72fr);gap:var(--space-2xl);align-items:start;max-width:1120px}
+.settings-block{padding:var(--space-xl) 0;border-bottom:1px solid var(--color-rule)}
+.settings-block:first-child{padding-top:0}.settings-block:last-child{border-bottom:0;padding-bottom:0}
+.settings-block h2{margin-bottom:var(--space-xs)}
+.settings-block>p{max-width:60ch}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-lg)}
+.fields>div{min-width:0}.fields .wide{grid-column:1/-1}
+.settings-panel{position:sticky;top:var(--space-xl)}
+.connection-state{padding:var(--space-lg) 0;border-top:1px solid var(--color-rule);margin-top:var(--space-xl)}
+.choice-card{display:flex;align-items:flex-start;gap:var(--space-md);padding:var(--space-md) 0;border-top:1px solid var(--color-rule)}
+.choice-card input{width:18px;min-width:18px;margin-top:3px}.choice-card label{margin:0;color:var(--color-ink);font-size:13px;font-weight:500}
+.choice-card small{display:block;color:var(--color-muted);font-size:11px;font-weight:400;margin-top:var(--space-xs)}
+#settingNotice{min-height:24px;margin-top:var(--space-lg)}
+@media(max-width:800px){.settings-layout{grid-template-columns:minmax(0,1fr)}.settings-panel{position:static;grid-row:1}}
+@media(max-width:540px){.fields{grid-template-columns:minmax(0,1fr)}.fields .wide{grid-column:auto}}
+</style>
+</head><body>
+<a href="#main" class="skip-link">Đến nội dung chính</a>
+<header class="topbar">
+<a class="brand" href="/chat" aria-label="WiseKape — Trang trao đổi"><span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M10 29V11h20M16 29h14V17M8 33L33 8" stroke="currentColor" stroke-width="2"/></svg></span><span><span class="brand-name">WiseKape</span><small>AutoCAD workspace</small></span></a>
+<nav aria-label="Không gian làm việc"><a class="nav-link" href="/chat">Trao đổi</a><a class="nav-link" href="/settings" aria-current="page">Cài đặt</a></nav>
+<button class="theme-toggle" type="button" data-theme-toggle aria-label="Đổi giao diện sáng tối"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z" stroke="currentColor" stroke-width="1.5"/></svg></button>
+</header>
+<main class="workspace" id="main">
+<div class="page-heading"><div><p class="eyebrow">Thiết lập workspace</p><h1>Kết nối & trợ lý.</h1><p>Chọn MCP server và cấu hình Codex dùng cho các yêu cầu mới.</p></div></div>
+<div class="settings-layout">
+<section class="card">
+<section class="settings-block"><h2>Máy chủ MCP</h2><p class="muted">Nhập địa chỉ MCP server AutoCAD. Token MCP chỉ được giữ trong phiên trình duyệt.</p>
+<div class="fields"><div class="wide"><label for="endpoint">Địa chỉ MCP server</label><input id="endpoint" type="url" value="http://127.0.0.1:8769/mcp" autocomplete="url"></div>
+<div class="wide"><label for="mcpToken">Bearer token MCP (nếu server yêu cầu)</label><input id="mcpToken" type="password" autocomplete="off" placeholder="Để trống nếu server không yêu cầu token"></div></div>
+<div class="actions"><button class="primary" id="connect">Kết nối MCP</button><button id="reconnect">Kết nối lại AutoCAD</button><button class="tertiary" id="refresh">Kiểm tra trạng thái</button></div>
+<p class="muted connection-state" id="connection" role="status" aria-live="polite">Chưa kết nối MCP.</p>
+</section>
+<section class="settings-block"><h2>Chọn agent</h2><p class="muted">Chọn cách Codex chạy Coordinator khi lập phương án.</p>
+<div class="choice-card"><input id="engineAgent" type="radio" name="engine" value="agent" checked><label for="engineAgent">Codex agent · app-server<small>Theo dõi sự kiện xử lý và trạng thái agent.</small></label></div>
+<div class="choice-card"><input id="engineCli" type="radio" name="engine" value="cli"><label for="engineCli">Codex CLI · tương thích<small>Dùng luồng CLI hiện có.</small></label></div>
+</section>
+<section class="settings-block"><h2>Model và mức suy luận</h2><p class="muted">Danh sách model được tải từ phiên Codex đã đăng nhập.</p>
+<label for="model">Model</label><select id="model"><option value="default">Mặc định Codex</option></select>
+<label for="effort">Mức suy luận</label><select id="effort"><option value="">Mặc định model</option></select>
+<p class="muted" id="modelInfo">Nhập token client để tải model từ Codex.</p>
+<div class="actions"><button id="loadModels">Tải / làm mới model</button><button class="primary" id="saveSettings">Lưu cấu hình</button></div>
+</section>
+<p id="settingNotice" role="status" aria-live="polite"></p>
+</section>
+<aside class="settings-panel">
+<section class="card"><p class="eyebrow">Quyền truy cập</p><h2>Client WiseKape</h2>
+<label for="token">Token client</label><input id="token" type="password" autocomplete="off" placeholder="Mở WiseKapeAutoCADMCPClient/data/operator-token.txt để lấy token">
+<p class="muted">Token client bảo vệ trang cấu hình và API. Giá trị này chỉ được giữ trong phiên trình duyệt.</p>
+<div class="actions"><a href="/chat">Quay lại trang trao đổi →</a></div>
+</section>
+<section class="card"><p class="eyebrow">Áp dụng cấu hình</p><h2>Công việc mới</h2><p class="muted">Agent, model và mức suy luận được lưu cho yêu cầu chat tiếp theo. Công việc đã bắt đầu tiếp tục với lựa chọn ban đầu.</p><p class="muted">MCP server có thể được kết nối lại khi AutoCAD khởi động lại. Nếu đổi địa chỉ server, nhấn “Kết nối MCP” để áp dụng.</p></section>
+</aside></div></main>
+<script>
+const $=id=>document.getElementById(id);let models=[];let loading=0;
+for(const id of ['token','endpoint','mcpToken']){const saved=sessionStorage.getItem('uc4n-'+id);if(saved!==null)$(id).value=saved;$(id).addEventListener('input',()=>sessionStorage.setItem('uc4n-'+id,$(id).value))}
+async function api(path,body){const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+$('token').value,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data}
+function notice(text,error=false){$('settingNotice').textContent=text;$('settingNotice').className=error?'error':'muted'}
+async function action(id,fn){$(id).disabled=true;notice('Đang xử lý…');try{await fn();if($('settingNotice').textContent==='Đang xử lý…')notice('')}catch(e){notice(e.message,true)}finally{$(id).disabled=false}}
+function settings(){return{model:$('model').value,reasoning_effort:$('effort').value||null,engine:document.querySelector('input[name=engine]:checked').value}}
+function renderEfforts(preferred=''){const entry=models.find(m=>m.model===$('model').value)||models.find(m=>m.isDefault)||models[0];const presets=entry?.supportedReasoningEfforts||[];const labels={low:'Thấp',medium:'Vừa',high:'Cao',xhigh:'Rất cao',max:'Tối đa',ultra:'Ultra'};$('effort').replaceChildren(new Option(`Mặc định${entry?' ('+entry.defaultReasoningEffort+')':''}`,''),...presets.map(x=>new Option(labels[x.reasoningEffort]||x.reasoningEffort,x.reasoningEffort)));$('effort').value=presets.some(x=>x.reasoningEffort===preferred)?preferred:'';if(entry){const choice=$('effort').value||entry.defaultReasoningEffort;$('modelInfo').textContent=`${entry.displayName} · ${entry.model} · ${choice}. ${(entry.inputModalities||[]).includes('image')?'Hỗ trợ chữ và ảnh.':'Chỉ hỗ trợ chữ.'}`}else $('modelInfo').textContent='Nhập token client rồi tải danh sách model từ Codex.'}
+async function loadModels(refresh=false){const version=++loading;$('modelInfo').textContent='Đang tải danh sách model…';try{const result=await api('models'+(refresh?'?refresh=true':''));if(version!==loading)return;models=result.models;const preferred=$('model').value;const defaultEntry=models.find(m=>m.isDefault)||models[0];$('model').replaceChildren(new Option(`Mặc định Codex — ${defaultEntry.displayName}`,'default'),...models.map(m=>new Option(m.displayName,m.model)));const saved=result.settings;$('model').value=models.some(m=>m.model===preferred)?preferred:saved.model==='default'||models.some(m=>m.model===saved.model)?saved.model:'default';document.querySelector(`input[name=engine][value="${saved.engine}"]`).checked=true;renderEfforts(saved.reasoning_effort||'')}catch(e){$('modelInfo').textContent='Không tải được model: '+e.message;throw e}}
+function showConnection(data){const state=data.status||{};$('connection').textContent=state.connected?`${state.backend} đã kết nối · ${data.tool_count} công cụ`:`Chưa kết nối AutoCAD${state.error?': '+state.error:''}`;$('connection').dataset.state=state.connected?'connected':'disconnected'}
+$('connect').onclick=()=>action('connect',async()=>{const result=await api('connect',{endpoint:$('endpoint').value,mcp_token:$('mcpToken').value});showConnection(result);if(!result.status.connected)throw Error(JSON.stringify(result.status))});
+$('reconnect').onclick=()=>action('reconnect',async()=>{const result=await api('reconnect',{});showConnection(result);if(!result.status.connected)throw Error(JSON.stringify(result.status))});
+$('refresh').onclick=()=>action('refresh',async()=>showConnection(await api('status')));
+$('loadModels').onclick=()=>action('loadModels',()=>loadModels(true));
+$('saveSettings').onclick=()=>action('saveSettings',async()=>{await api('ai-settings',settings());notice('Đã lưu cấu hình cho công việc mới.')});
+$('model').onchange=()=>renderEfforts();$('token').addEventListener('change',()=>loadModels().catch(()=>{}));
+if($('token').value)loadModels().catch(()=>{});
+</script>
+<script src="/assets/workspace.js"></script>
+</body></html>

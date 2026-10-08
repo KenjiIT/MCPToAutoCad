@@ -1,0 +1,235 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the host-resident catalog leaf resolver. It LINKS the single source
+    file CatalogLookup.cs rather than referencing the server exe, so the pure leaf
+    rule and its sha256 provenance can be proven in isolation. Wire tests also
+    build the server executable, without referencing its assembly, so an old
+    local binary cannot stand in for the current source.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Horizun.Server.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Horizun.Server\Horizun.Server.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The MCP `instructions` string. Its own file precisely so it can be asserted:
+         it is the only channel the protocol gives a server for telling a client agent
+         how to behave, so trimming it has to fail a test. -->
+    <Compile Include="..\..\src\Horizun.Server\ServerInstructions.cs" Link="ServerInstructions.cs" />
+    <!-- The negotiation rule: which MCP version to answer. Golden-tested because a bad
+         answer breaks every client at the first message, silently from this side. -->
+    <Compile Include="..\..\src\Horizun.Server\ProtocolNegotiation.cs" Link="ProtocolNegotiation.cs" />
+    <!-- The 2026-07-28 adapter. It is the layer that decides which ERA a request is in,
+         and the one property that matters most about it - that a legacy result is byte
+         for byte what it was before the adapter existed - can only be asserted against
+         the shipped source, never a copy. Linked whole: the revision table, the request
+         envelope, the result envelope, the caching hints, server/discover, the extension
+         registry, the subscription stream, the modern tasks spelling, the provenance
+         stamp and the discovery-cost measurement are one unit and drift as one. -->
+    <Compile Include="..\..\src\Horizun.Server\Protocol\McpRevision.cs" Link="Protocol\McpRevision.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\McpErrorCodes.cs" Link="Protocol\McpErrorCodes.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\RequestEnvelope.cs" Link="Protocol\RequestEnvelope.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\ResultEnvelope.cs" Link="Protocol\ResultEnvelope.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\CacheHints.cs" Link="Protocol\CacheHints.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\DiscoverHandler.cs" Link="Protocol\DiscoverHandler.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\ExtensionRegistry.cs" Link="Protocol\ExtensionRegistry.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\SubscriptionStream.cs" Link="Protocol\SubscriptionStream.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\ModernTasks.cs" Link="Protocol\ModernTasks.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\ProvenanceStamp.cs" Link="Protocol\ProvenanceStamp.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\DiscoveryCost.cs" Link="Protocol\DiscoveryCost.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpSession.cs" Link="McpSession.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpResources.cs" Link="McpResources.cs" />
+    <!-- The MCP App the clash tool declares. Linked with McpResources because the
+         property that matters - that the app and the text render the same payload from
+         the same fields - is only assertable against the shipped source. -->
+    <Compile Include="..\..\src\Horizun.Server\McpAppResources.cs" Link="McpAppResources.cs" />
+    <!-- The impact preview, with its three files under the server's logical names so
+         the page the tests read is the page the server serves. -->
+    <Compile Include="..\..\src\Horizun.Server\ImpactPreviewApp.cs" Link="ImpactPreviewApp.cs" />
+    <EmbeddedResource Include="..\..\src\Horizun.Server\Apps\impact-preview.html" LogicalName="Horizun.Apps.impact-preview.html" />
+    <EmbeddedResource Include="..\..\src\Horizun.Server\Apps\impact-preview-adapter.js" LogicalName="Horizun.Apps.impact-preview-adapter.js" />
+    <EmbeddedResource Include="..\..\src\Horizun.Server\Apps\impact-preview-view.js" LogicalName="Horizun.Apps.impact-preview-view.js" />
+    <None Include="ImpactPreview\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="McpApps\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\..\src\Horizun.Server\McpWorkflowCatalog.cs" Link="McpWorkflowCatalog.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpPrompts.cs" Link="McpPrompts.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpCompletions.cs" Link="McpCompletions.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpLogging.cs" Link="McpLogging.cs" />
+    <Compile Include="..\..\src\Horizun.Server\ToolListMonitor.cs" Link="ToolListMonitor.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpTasks.cs" Link="McpTasks.cs" />
+    <Compile Include="..\..\src\Horizun.Server\CatalogLookup.cs" Link="CatalogLookup.cs" />
+    <!-- The ISO 19650 project context tool, with the schema embedded under the SAME
+         logical name the server uses, so the tests read the resource the shipped
+         code reads rather than a file next to the test. -->
+    <Compile Include="..\..\src\Horizun.Server\ProjectContext.cs" Link="ProjectContext.cs" />
+    <Compile Include="..\..\src\Horizun.Server\ModelExplainIso.cs" Link="ModelExplainIso.cs" />
+    <EmbeddedResource Include="..\..\schemas\project-context.v1.schema.json" LogicalName="Horizun.Schemas.project-context.v1.schema.json" />
+    <!-- LOIN -> IDS and the bSDD lookup, with the resources under the server's logical
+         names and the IDS reader the generated file is proved with. -->
+    <Compile Include="..\..\src\Horizun.Server\LoinIds.cs" Link="LoinIds.cs" />
+    <Compile Include="..\..\src\Horizun.Server\BsddLookup.cs" Link="BsddLookup.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\IdsDocument.cs" Link="IdsDocument.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\IdsRestriction.cs" Link="IdsRestriction.cs" />
+    <EmbeddedResource Include="..\..\schemas\ids\ids-1.0.xsd" LogicalName="Horizun.Schemas.ids-1.0.xsd" />
+    <EmbeddedResource Include="..\..\schemas\ids\xmlschema-subset.xsd" LogicalName="Horizun.Schemas.xmlschema-subset.xsd" />
+    <EmbeddedResource Include="..\..\schemas\ids\ifc-entities.txt" LogicalName="Horizun.Schemas.ifc-entities.txt" />
+    <Compile Include="..\..\src\Horizun.Server\ExcelWriteRows.cs" Link="ExcelWriteRows.cs" />
+    <Compile Include="..\..\src\Horizun.Server\ExcelReadRows.cs" Link="ExcelReadRows.cs" />
+    <Compile Include="..\..\src\Horizun.Server\PowerBiPush.cs" Link="PowerBiPush.cs" />
+    <!-- The budget comparison and the rules it runs, so the Excel destination can be
+         proved against a disposable workbook and the Power BI one in dry_run only. -->
+    <Compile Include="..\..\src\Horizun.Server\BudgetCompare.cs" Link="BudgetCompare.cs" />
+    <Compile Include="..\..\src\Horizun.Server\BudgetBc3Export.cs" Link="BudgetBc3Export.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\BudgetComparisonRules.cs" Link="BudgetComparisonRules.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\Bc3Rules.cs" Link="Bc3Rules.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\InformationContainer.cs" Link="InformationContainer.cs" />
+    <Compile Include="..\..\src\Horizun.Server\InformationContainerTool.cs" Link="InformationContainerTool.cs" />
+    <Compile Include="..\..\src\Horizun.Server\InformationContainerTool.Register.cs" Link="InformationContainerTool.Register.cs" />
+    <!-- The inspection core both CDE readers share, and the cloud reader proved against a
+         fake HttpMessageHandler: no network, no credential. -->
+    <Compile Include="..\..\src\Horizun.Server\ContainerInspection.cs" Link="ContainerInspection.cs" />
+    <Compile Include="..\..\src\Horizun.Server\CdeCloudHttp.cs" Link="CdeCloudHttp.cs" />
+    <Compile Include="..\..\src\Horizun.Server\CdeCloudTool.cs" Link="CdeCloudTool.cs" />
+    <Compile Include="..\..\src\Horizun.Server\CdeCloudIssues.cs" Link="CdeCloudIssues.cs" />
+    <!-- The repair memory and the tool that works it. The property worth proving here is
+         the privacy one: that nothing specific survives normalisation, and that a message
+         the redactor could not clean is never written at all. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\RepairMemory.cs" Link="RepairMemory.cs" />
+    <Compile Include="..\..\src\Horizun.Server\RepairMemoryTool.cs" Link="RepairMemoryTool.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\ScriptPromotion.cs" Link="ScriptPromotion.cs" />
+    <Compile Include="..\..\src\Horizun.Server\ScriptPromotionTool.cs" Link="ScriptPromotionTool.cs" />
+    <Compile Include="..\..\src\Horizun.Server\PowerBiSelection.cs" Link="PowerBiSelection.cs" />
+    <!-- The concurrency plumbing: one writer, one reply per id, one in-flight
+         registry. Linked for the same reason - it needs neither Revit nor a
+         running server, only a StringWriter. -->
+    <Compile Include="..\..\src\Horizun.Server\Wire.cs" Link="Wire.cs" />
+    <!-- Discovery resolution: which Revit instance a call goes to, and when that
+         question has no single answer. Two Revit 2026 running at once cannot be
+         tested by starting two Revits, so the directory and the liveness probe are
+         injectable and this proves the rules against a temp folder. -->
+    <Compile Include="..\..\src\Horizun.Server\PipeClient.cs" Link="PipeClient.cs" />
+    <!-- What an identical retry does after a cancellation or timeout, and the
+         masked diagnosis a -32700 carries. Pure, so tested directly. -->
+    <Compile Include="..\..\src\Horizun.Server\CancellationAdvice.cs" Link="CancellationAdvice.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Protocol\ParseErrorDiagnosis.cs" Link="Protocol\ParseErrorDiagnosis.cs" />
+    <!-- PipeClient asks this where the discovery files are. Linked so the server side
+         of the shared-root property is under test with the same source the add-in
+         compiles. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\HorizunPaths.cs" Link="HorizunPaths.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\AsyncResultPayload.cs" Link="AsyncResultPayload.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\DiscoverySweep.cs" Link="DiscoverySweep.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\RegistryContract.cs" Link="RegistryContract.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\CommandResult.cs" Link="CommandResult.cs" />
+    <!-- CommandResult now carries the fallback signal, so its type comes with it. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\FallbackSignal.cs" Link="FallbackSignal.cs" />
+    <!-- The transport hop, as the shipped code rather than a copy: PipeEnvelope is what
+         the add-in writes to the pipe and McpResult is what the server hands the client.
+         A structured signal dropped between them looks exactly like one that was never
+         granted, so the claim has to be made against values, not source text. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\FallbackDecision.cs" Link="FallbackDecision.cs" />
+    <!-- The atomic-plan rollback diagnostic: a failed plan carries it as structure, and
+         McpResult spreads it into structuredContent. Tested as the shipped code. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\PlanFailure.cs" Link="PlanFailure.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Transport\PipeEnvelope.cs" Link="PipeEnvelope.cs" />
+    <Compile Include="..\..\src\Horizun.Server\McpResult.cs" Link="McpResult.cs" />
+    <!-- The typed-overlap advisory masked by Python's OWN lexer. It needs a real
+         IronPython engine, which this project already has for the recipe syntax check,
+         and it is the path the command actually takes - the hand scanner is only the
+         fallback and is proved separately in Horizun.Core.Tests. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\PythonTokenMask.cs" Link="PythonTokenMask.cs" />
+    <!-- The Python every execute_python script starts with (5.25). It is a string in
+         C#, so no compiler in the build can see a syntax error in it - and a broken
+         prelude breaks EVERY script on the machine. The same engine that will run it
+         inside Revit parses it here, and the behaviour a script leans on (the
+         since-window, the refusal to call an unwatched run quiet, and a dialog scope
+         that is released even when the block throws) is exercised against stand-ins. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\ScriptPrelude.cs" Link="ScriptPrelude.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\Idempotency.cs" Link="Idempotency.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\DurableCommandIdempotency.cs" Link="DurableCommandIdempotency.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\DurableStoreRetention.cs" Link="DurableStoreRetention.cs" />
+    <!-- The add-in's job record, so "the server reads where the add-in writes" can be
+         asserted with the writer that actually ships rather than a stand-in. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\Job.cs" Link="Job.cs" />
+    <!-- The sequence allowlist and the step states, so the SCHEMA and the ADMISSION
+         can be compared against each other rather than kept in step by hand. A tool
+         the schema offers and admission refuses is a documented option the server
+         accepts and the queue then rejects. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\JobSequenceRules.cs" Link="JobSequenceRules.cs" />
+    <!-- Job reports a record it could not write rather than swallowing the failure,
+         and it reports it through Log. Revit-free, like everything else linked here. -->
+    <Compile Include="..\..\src\Horizun.Revit\Core\Log.cs" Link="Log.cs" />
+    <!-- The reader those records exist for. It answers WITHOUT touching Revit, so
+         the five states it reports are provable here against real files - which is
+         the only place they can be proved, since four of the five require a Revit
+         that is busy, closing, or gone. -->
+    <Compile Include="..\..\src\Horizun.Server\JobStatus.cs" Link="JobStatus.cs" />
+    <!-- The shared contract, so drift between the two halves is a failing test. -->
+    <Compile Include="..\..\src\Horizun.Contracts\Contract.cs" Link="Contract.cs" />
+    <!-- Which Revit a session is pointed at, and the tool that repoints it. The pair
+         used to be two static fields written one after the other while calls ran on
+         other threads, and the only place that property can be proved is here: it
+         needs concurrency and no Revit at all. Targets.cs comes with the two small
+         things it leans on - the refusal type and the log. -->
+    <Compile Include="..\..\src\Horizun.Server\TargetSelection.cs" Link="TargetSelection.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Targets.cs" Link="Targets.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Errors.cs" Link="Errors.cs" />
+    <!-- Server-to-client requests (elicitation): ProjectContext's elicit reads the
+         per-call ClientContext, and the in-memory client drives McpClientRequests. -->
+    <Compile Include="..\..\src\Horizun.Server\McpClientRequests.cs" Link="McpClientRequests.cs" />
+    <Compile Include="..\..\src\Horizun.Server\MrtrRequestState.cs" Link="MrtrRequestState.cs" />
+    <!-- The bounded stdin reader. The case it exists for - a payload with no newline
+         in it, larger than memory - can only be proved against a stream that never
+         allocates the payload, which is a test fixture and never a client. -->
+    <Compile Include="..\..\src\Horizun.Server\BoundedLineReader.cs" Link="BoundedLineReader.cs" />
+    <!-- The tool table itself, plus the settings it filters on. tools/list is what a
+         client sees at startup, and "Python is advertised on a fresh install" is a
+         property of that pair - provable only by building the same list the server
+         answers with, from the same Settings the add-in reads. -->
+    <!-- Tools.cs dispatches to ProcedureRun and ScriptPromotionTool calls
+         ScriptInvocation: without these two the project did not compile, so
+         every test in it was silent rather than passing. -->
+    <Compile Include="..\..\src\Horizun.Server\ProcedureRun.cs" />
+    <Compile Include="..\..\src\Horizun.Server\SharedRecordFile.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\ScriptInvocation.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Tools.cs" Link="Tools.cs" />
+    <!-- The contract schema check: the advertised-schema equivalence proof and schema_help judge arguments with the same rules. -->
+    <Compile Include="..\..\src\Horizun.Server\ContractSchemaCheck.cs" Link="ContractSchemaCheck.cs" />
+    <Compile Include="..\..\src\Horizun.Server\ContractVariants.cs" Link="ContractVariants.cs" />
+    <Compile Include="..\..\src\Horizun.Server\SchemaHelp.cs" Link="SchemaHelp.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\Settings.cs" Link="Settings.cs" />
+    <Compile Include="..\..\src\Horizun.Revit\Core\ToolPacks.cs" Link="ToolPacks.cs" />
+    <!-- The model-data neutraliser and injection marker every tool reply passes through. -->
+    <Compile Include="..\..\src\Horizun.Server\ContentSafety.cs" Link="ContentSafety.cs" />
+    <!-- The toolset measurement behind horizun://session/toolsets and health. -->
+    <Compile Include="..\..\src\Horizun.Server\ToolsetReport.cs" Link="ToolsetReport.cs" />
+    <Compile Include="..\..\src\Horizun.Server\Log.cs" Link="Log.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- The recipe-backed tools carry their geometry in Python that ships beside the
+         add-in. A syntax error in one of those files cannot be caught by the C#
+         compiler and would otherwise surface the first time a user calls the tool,
+         inside Revit, on a real model. The same engine that runs them parses them
+         here — which needs no Revit, so CI can do it. -->
+    <PackageReference Include="IronPython" Version="3.4.2" />
+    <!-- The prelude imports io and json, exactly as it does inside Revit, so the
+         standard library has to be here too - the add-in ships it beside the plugin
+         and points the engine's search path at it. Without this the prelude tests
+         would prove that a prelude PARSES and never that it runs. -->
+    <PackageReference Include="IronPython.StdLib" Version="3.4.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

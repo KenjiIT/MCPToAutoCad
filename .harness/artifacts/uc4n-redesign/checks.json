@@ -1,0 +1,11 @@
+{
+  "passed": [
+    "chat: both themes, 6 widths, fonts, IDs, no clipped controls",
+    "settings: both themes, 6 widths, fonts, IDs, no clipped controls",
+    "tools: both themes, 6 widths, fonts, IDs, no clipped controls",
+    "Theme persistence, navigation, mobile layout, agent/model/effort settings, MCP endpoint actions, suggestions, file upload, chat, approval, result rendering. All APIs mocked; no CAD calls.",
+    "API integration: saved agent/model/reasoning preferences populate a new chat job; persistence isolated in temporary storage."
+  ],
+  "browser_errors": [],
+  "cad_calls": "mocked"
+}

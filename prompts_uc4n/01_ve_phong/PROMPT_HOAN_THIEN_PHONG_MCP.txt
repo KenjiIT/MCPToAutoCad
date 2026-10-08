@@ -1,0 +1,15 @@
+﻿HƯỚNG DẪN — PHẦN HOÀN THIỆN ĐÃ TÁCH THÀNH 3 FILE
+
+Không gửi file hướng dẫn này để thực thi. Gửi từng file sau theo thứ tự:
+
+1. PROMPT_HOAN_THIEN_A_NHAN_KICH_THUOC.txt
+   Thêm nhãn và 5 kích thước.
+2. PROMPT_HOAN_THIEN_B_KIEM_TRA.txt
+   Đọc lại, kiểm tra và hiển thị bản vẽ.
+3. PROMPT_HOAN_THIEN_C_XUAT_DXF.txt
+   Xuất DXF khi đáp ứng điều kiện lưu không ghi đè.
+
+Mỗi lần gửi một file; hoàn thành lượt trước rồi mới gửi lượt tiếp theo.
+Nếu client không giữ lịch sử, gửi kèm kết quả thật và thông tin bản vẽ của lượt trước.
+Mỗi phương án tối đa 10 lời gọi; nếu cần, hoàn thành phần còn lại của cùng lượt trước khi chuyển sang lượt tiếp theo.
+File dựng phòng vẫn là PROMPT_VE_PHONG_MCP.txt.

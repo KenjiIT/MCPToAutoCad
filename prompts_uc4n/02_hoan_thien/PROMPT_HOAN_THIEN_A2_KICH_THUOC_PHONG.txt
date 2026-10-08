@@ -1,0 +1,11 @@
+Chỉ lập phương án cho yêu cầu trong file này, tối đa 10 lời gọi, dùng tool runtime đúng schema. Tiếp tục bản vẽ phòng hiện tại, không tạo mới. Cần đã hoàn thành A0 và xác nhận phòng nằm trong Model; nếu chưa có kết quả đó, nêu điều kiện thiếu, không lập lại các lệnh đọc mãi. Nếu thông tin đủ, phương án phải có tool tạo tương ứng; không trả phương án chỉ đọc rồi coi như đã thêm chữ/kích thước. Không tạo trùng mục đã hoàn thành. Không tự thực thi nếu client chỉ lập phương án.
+
+A2 — CHỈ TẠO HAI KÍCH THƯỚC THÔNG THỦY
+Dùng dimension_linear, layer="A-DIMEN-T-N":
+1. x1=0,y1=0,x2=5000,y2=0,dim_x=2500,dim_y=-700,rotation=0.
+2. x1=0,y1=0,x2=0,y2=4000,dim_x=-700,dim_y=2000,rotation=90.
+Không ghi đè text giá trị đo; kỳ vọng lần lượt 5000 và 4000 mm.
+Nếu kết quả trước xác nhận layer thiếu, thêm layer_create(name="A-DIMEN-T-N") trước. Nếu chưa rõ, đọc layer_list một lượt riêng.
+Không thêm nhãn, không dựng lại phòng, không xuất file.
+Cần cấp dimension_linear, layer_create; layer_list nếu thiếu kết quả layer.
+

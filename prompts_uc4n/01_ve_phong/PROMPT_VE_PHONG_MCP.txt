@@ -1,0 +1,31 @@
+﻿PHẦN 1/2 — CHUẨN BỊ VÀ DỰNG PHÒNG BẰNG U-C4N MCP
+
+Hãy dựng mặt bằng phòng 2D, đơn vị mm, thông thủy 5000 × 4000, tường 200 mm phía ngoài; cửa đi 900 mm giữa cạnh dưới, mở vào phòng 90°, bản lề trái nhìn từ ngoài; cửa sổ 1200 mm giữa cạnh trên.
+
+CHỌN BẢN VẼ
+- Làm theo yêu cầu gửi kèm: “tạo mới” thì tạo mới, “tiếp tục” thì dùng bản vẽ đang hoạt động, tên cụ thể thì dùng đúng bản vẽ đó.
+- Nếu không có yêu cầu gửi kèm, phần 1 này mặc định tạo bản vẽ mới. Khi phần 1 đã bắt đầu và có kết quả tạo mới, tiếp tục bản vẽ đó, không tạo lại.
+- Không sửa hoặc đóng bản vẽ khác. Không hỏi lại tên khi prompt đã cho phép dùng bản vẽ hiện tại; chỉ hỏi khi đích mơ hồ hoặc trạng thái mâu thuẫn.
+
+THỰC HIỆN THEO CÁC LƯỢT NHỎ
+1. Tạo/chọn bản vẽ theo quy tắc trên. Đọc trạng thái để xác định bản vẽ đích; nếu kết quả cần dùng ở bước sau, tách thành phương án riêng.
+2. Với bản vẽ mới/trống, đặt INSUNITS=4 bằng tool có trong catalog và đọc lại. Nếu bản vẽ có hình học và đơn vị khác, không chỉ đổi INSUNITS rồi coi như đã chuyển đổi; báo vấn đề trước khi ghi.
+3. Khi đích và đơn vị đã có kết quả thật, gọi arch_plan_from_spec với tham số spec sau:
+
+{
+  "lang": "en",
+  "poche": false,
+  "walls": [{"id":"EXT","axis":[[0,0],[5000,0],[5000,4000],[0,4000]],"thickness":200,"justification":"right","closed":true}],
+  "openings": [
+    {"id":"D1","wall":"EXT","kind":"door","offset":2050,"width":900,"swing":"in","hand":"right"},
+    {"id":"W1","wall":"EXT","kind":"window","offset":10900,"width":1200}
+  ]
+}
+
+Các id EXT/D1/W1 là id thiết kế mới, không phải handle hiện có.
+Quy ước từ mã nguồn U-C4N 1.6 đã đối chiếu: right phát triển chiều dày bên phải axis; offset đo tích lũy từ đầu axis tới mép đầu cửa; in mở bên trái axis; hand nhìn từ phía cửa mở tới. Chu vi trên ngược kim đồng hồ nên tường nằm ngoài và cửa mở vào phòng. hand=right cho bản lề trái nhìn từ ngoài. material bỏ trống mặc định brick.
+Nguồn: engineering/arch/walls.py (face_offsets), model.py (segment_of), openings.py (opening_prims). Đây là tài liệu mã nguồn, chưa phải kết quả chạy hình học. Tôi chỉ định chính xác các giá trị trên; không cần lựa chọn lại hoặc hỏi lại quy ước chỉ vì catalog chưa mô tả đủ. Nếu có mâu thuẫn cụ thể với schema/phiên bản runtime, báo rõ.
+
+Chỉ dùng tool có thật và đúng schema. Mỗi phương án tối đa 10 lời gọi; chỉ lập lượt kế tiếp có đủ dữ liệu, không ép mọi việc vào một phương án. Nếu client chỉ lập phương án, không báo đã thực thi. Dùng kết quả thật để tiếp tục; không dùng placeholder hoặc tham chiếu kết quả nếu client không hỗ trợ. Nếu client không giữ lịch sử, cần gửi kèm kết quả lượt trước.
+Kiểm tra omitted/cảnh báo. Không dựng trùng phần đã hoàn thành. Chưa tạo nhãn, kích thước hoặc lưu file ở phần 1.
+Trả trạng thái hoàn thành thực tế, bản vẽ đích, đơn vị và phần còn thiếu để tiếp tục phần 2.

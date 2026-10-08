@@ -1,0 +1,18 @@
+LƯỢT B — CHỈ ĐỌC LẠI VÀ HIỂN THỊ
+
+Tiếp tục bản vẽ phòng hiện tại đã dựng bằng phần 1; không tạo mới hoặc dựng lại tường/cửa. Nếu yêu cầu gửi kèm chỉ định bản vẽ cụ thể, dùng đúng bản vẽ đó. Đọc trạng thái để xác định đích; chỉ hỏi khi thiếu dữ liệu hoặc mâu thuẫn, không hỏi lại tên khi đã cho phép dùng bản vẽ hiện tại.
+Chỉ dùng tool trong catalog, đúng schema. Mỗi phương án tối đa 10 lời gọi. Không dùng placeholder/tham chiếu kết quả nếu client không hỗ trợ; tách phương án đọc và ghi khi cần. Nếu client không giữ lịch sử, gửi kèm kết quả trước. Không chạy lại phần đã hoàn thành. Nếu chỉ lập phương án, không báo đã thực thi.
+
+Dùng tool đọc thực tế để đối chiếu:
+- Đơn vị mm; biên trong 5000 × 4000, tường 200 mm phía ngoài.
+- Cửa đi cạnh dưới x=2050..2950, bản lề phía x=2050, mở về +Y 90°.
+- Cửa sổ cạnh trên x=1900..3100.
+- Nhãn nguyên văn “PHÒNG 01 — 20 m²”, điểm chèn (2500,2000), chiều cao 150 mm; không yêu cầu căn giữa chữ.
+- 5 kích thước có giá trị đo 5000, 4000, 200, 900 và 1200 mm.
+- Layer dự kiến: A-WALL-E-N, A-DOOR-E-N, A-WIND-E-N, A-ROOM-T-N, A-DIMEN-T-N.
+Không coi diện tích một entity tường là diện tích phòng. Chỉ báo diện tích đã đo khi có tool phù hợp và kết quả thật.
+Zoom extents; lấy screenshot nếu có tool. Ảnh không thay thế kiểm tra số đo.
+Chỉ xử lý lượt B. Không tạo/sửa/xóa entity, không lưu hoặc xuất file. Nếu sai lệch, báo và đề xuất lượt sửa riêng, chưa tự thực thi sửa.
+Nếu vượt 10 lời gọi, kiểm tra theo nhiều phương án; chỉ báo đạt cho mục đã kiểm tra.
+Trả bảng đạt/sai/chưa xác minh, bản vẽ đích và các cảnh báo.
+

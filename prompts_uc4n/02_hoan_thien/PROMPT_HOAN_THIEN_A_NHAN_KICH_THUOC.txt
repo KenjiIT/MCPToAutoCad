@@ -1,0 +1,12 @@
+﻿LƯỢT A ĐÃ TÁCH — GỬI TỪNG FILE
+
+1. PROMPT_HOAN_THIEN_A0_CHON_MODEL.txt — chuyển sang Model, sau đó đọc trạng thái riêng để xác nhận phòng và đơn vị.
+2. PROMPT_HOAN_THIEN_A1_NHAN.txt — chỉ tạo nhãn.
+3. PROMPT_HOAN_THIEN_A2_KICH_THUOC_PHONG.txt — hai kích thước thông thủy.
+4. PROMPT_HOAN_THIEN_A3_KICH_THUOC_CUA.txt — chiều dày tường và chiều rộng hai cửa.
+
+Cấp các tool file yêu cầu trong danh sách “Cấp cho AI”. layout_set_current và layout_list có thể chưa được chọn mặc định.
+Trước khi nhấn thực thi, kiểm tra steps: một phương án chỉ có drawing_info, layer_list, entity_list hoặc system_get_variable chỉ đọc dữ liệu, không tạo chữ hoặc kích thước.
+Nếu client không giữ lịch sử, dán kết quả thật của lượt trước kèm yêu cầu tiếp theo.
+Chỉ chạy A1 khi A0 xác nhận phòng đã có trong Model và đơn vị mm. Không tạo trùng phần đã hoàn thành.
+Sau A3, tiếp tục file B kiểm tra và file C xuất DXF.

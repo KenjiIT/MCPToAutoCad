@@ -1,0 +1,9 @@
+BÀI TEST 1 — YÊU CẦU ĐƠN GIẢN, ĐỦ THÔNG SỐ
+
+Tạo một bản vẽ mới, đơn vị mm. Trên Model, tạo:
+- Layer TEST-GEOMETRY.
+- Hình chữ nhật kín, góc dưới trái (0,0), góc trên phải (100,60), thuộc layer TEST-GEOMETRY.
+- Đường tròn tâm (50,30), bán kính 10, cùng layer.
+
+Hiển thị toàn bộ hình vẽ. Đọc lại các đối tượng và xác nhận tọa độ, kích thước. Nếu chỉ lập phương án thì không nói đã vẽ. Chỉ dùng tool có trong catalog; nếu thiếu tool tạo hình hoặc không xác định được đích bản vẽ, nêu chính xác phần thiếu.
+

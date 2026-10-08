@@ -1,0 +1,35 @@
+VẼ MẶT BẰNG NHÀ 2D CÓ ĐẦY ĐỦ NỘI THẤT
+
+Hãy tạo một bản vẽ AutoCAD mới cho nhà một tầng gồm đúng bốn không gian chính: một phòng khách, một phòng bếp kết hợp ăn uống, một phòng tắm và một gara cho một ô tô. Vẽ mặt bằng nhìn từ trên xuống, đủ rõ để tôi mở, xem và chỉnh sửa tiếp trong AutoCAD. Hãy thực hiện bản vẽ, kiểm tra rồi lưu file; đừng chỉ mô tả phương án.
+
+Kích thước và bố cục
+- Đơn vị bản vẽ là millimet. Kích thước phủ bì dự kiến 10.400 × 8.400 mm; tường bao dày 200 mm, tường ngăn dày 100 mm. Phần bên trong tường bao rộng khoảng 10.000 × 8.000 mm. Nếu bề dày vách làm thay đổi kích thước thông thủy, hãy ghi kích thước thực tế đã dựng, không ghi số dự kiến như thể đã đo được.
+- Mặt tiền nằm ở cạnh phía Nam, tức cạnh dưới của bản vẽ. Phía Bắc nằm ở cạnh trên.
+- Bên trái mặt bằng: gara ở phía trước, khoảng 3.500 × 5.500 mm thông thủy; phòng tắm ở phía sau, chiếm phần diện tích còn lại của dải bên trái.
+- Bên phải mặt bằng: phòng khách ở phía trước, khoảng 6.500 × 4.000 mm thông thủy; phòng bếp và bàn ăn ở phía sau, chiếm phần diện tích còn lại của dải bên phải.
+- Bố trí các vách ngăn để bốn không gian có đường bao rõ ràng. Có thể điều chỉnh nhẹ các kích thước tham khảo để tường, cửa và nội thất khớp nhau, nhưng giữ kích thước phủ bì và vị trí tương đối của các phòng.
+
+Cửa, cửa sổ và lối đi
+- Bố trí cửa gara rộng khoảng 2.800 mm ở mặt tiền. Cửa chính rộng 900 mm từ mặt tiền vào phòng khách.
+- Tạo lối đi giữa phòng khách và bếp rộng ít nhất 900 mm. Đặt cửa nối phòng khách với gara để đi lại trong nhà mà không cần ra ngoài. Phòng tắm có cửa rộng khoảng 700 mm mở từ phía bếp hoặc phần lưu thông liền kề; không mở trực tiếp từ gara.
+- Thể hiện cánh cửa và hướng mở. Tránh để cánh cửa va vào đồ nội thất hoặc thiết bị.
+- Đặt cửa sổ lấy sáng cho phòng khách ở tường ngoài phía Đông hoặc phía Nam; cho bếp ở phía Đông hoặc phía Bắc; cho phòng tắm một cửa sổ nhỏ ở phía Bắc. Tránh đặt cửa sổ phía sau tủ bếp cao hoặc ở vị trí cửa, thiết bị chắn mất.
+
+Nội thất và thiết bị nhìn từ trên xuống
+- Phòng khách: sofa ba chỗ khoảng 2.200 × 900 mm, bàn trà, kệ tivi và một ghế đơn nếu còn đủ chỗ. Sofa hướng về tivi.
+- Bếp: tủ bếp chữ L hoặc một dãy tủ bếp hợp lý, bồn rửa, bếp nấu, tủ lạnh và bàn ăn bốn ghế. Phân biệt các thiết bị bằng hình dạng hoặc ghi chú ngắn gọn.
+- Phòng tắm: bồn cầu, lavabo, khu tắm đứng khoảng 900 × 900 mm có vách ngăn, gương và chỗ đặt khăn. Giữ khoảng trống sử dụng trước các thiết bị.
+- Gara: hình chiếu bằng của một ô tô con dài khoảng 4.500 mm, rộng khoảng 1.800 mm. Chừa lối ra vào xe và khoảng trống hợp lý để mở cửa xe.
+- Nội thất và thiết bị phải nằm trọn trong phòng tương ứng, không đè lên tường, cửa, cửa sổ hoặc nhau. Giữ lối đi chính rộng khoảng 900 mm ở những nơi bố cục cho phép.
+
+Chữ, kích thước và trình bày
+- Ghi tên tiếng Việt cho bốn không gian: PHÒNG KHÁCH, BẾP + ĂN, PHÒNG TẮM, GARA. Ghi diện tích từng phòng chỉ khi có thể tính từ hình học thực tế của bản vẽ.
+- Ghi kích thước phủ bì, kích thước chính của từng phòng, bề rộng các cửa đi và cửa gara. Đặt đường kích thước ở vị trí dễ đọc, tránh che nội thất.
+- Dùng các lớp bản vẽ riêng nếu có thể cho tường, cửa, cửa sổ, nội thất, chữ và kích thước. Nét tường cần nổi bật hơn nét nội thất. Bổ sung mũi tên chỉ hướng Bắc.
+- Vẽ các phần ở tỷ lệ thật trong không gian mô hình; phóng khung nhìn để thấy toàn bộ nhà sau khi hoàn thành.
+
+Kiểm tra và lưu
+- Trước khi vẽ, tạo bản vẽ mới và xác nhận đơn vị millimet bằng khả năng hiện có của hệ thống.
+- Sau khi vẽ, kiểm tra lại sự hiện diện của đủ bốn phòng, tường, cửa, cửa sổ, nội thất, tên phòng và đường kích thước. Kiểm tra các lối đi và phát hiện chồng lấn rõ ràng; sửa lỗi có thể sửa được trước khi lưu.
+- Lưu bản vẽ với tên Nha_4_khong_gian_day_du.dwg vào thư mục xuất được máy chủ cho phép. Nếu môi trường chỉ xuất được DXF, dùng tên Nha_4_khong_gian_day_du.dxf. Không ghi đè file có sẵn; nếu tên đã tồn tại, thêm số thứ tự vào tên file.
+- Cuối cùng, báo ngắn gọn đường dẫn file đã lưu, định dạng file và những phần đã kiểm tra được. Nếu có yêu cầu nào không thực hiện được, nêu đúng phần đó; không coi phần chưa vẽ là đã hoàn thành.

@@ -1,0 +1,10 @@
+Chỉ lập phương án cho yêu cầu trong file này, tối đa 10 lời gọi, dùng tool runtime đúng schema. Tiếp tục bản vẽ phòng hiện tại, không tạo mới. Cần đã hoàn thành A0 và xác nhận phòng nằm trong Model; nếu chưa có kết quả đó, nêu điều kiện thiếu, không lập lại các lệnh đọc mãi. Nếu thông tin đủ, phương án phải có tool tạo tương ứng; không trả phương án chỉ đọc rồi coi như đã thêm chữ/kích thước. Không tạo trùng mục đã hoàn thành. Không tự thực thi nếu client chỉ lập phương án.
+
+A1 — CHỈ TẠO NHÃN
+Tạo nguyên văn “PHÒNG 01 — 20 m²” tại x=2500, y=2000, height=150, rotation=0, layer="A-ROOM-T-N" bằng entity_create_text.
+Nếu kết quả đọc A0 xác nhận thiếu layer này, thêm layer_create(name="A-ROOM-T-N") trước bước tạo chữ. Nếu chưa rõ layer có tồn tại, lập một lượt đọc layer_list rồi tiếp tục bằng kết quả thật.
+Không bắt buộc căn giữa chữ; không thêm kích thước hoặc xuất file.
+20 m² là diện tích kỳ vọng, chưa phải giá trị đo.
+Các tool cần cấp: entity_create_text, layer_create; layer_list chỉ cần nếu thiếu thông tin layer.
+Sau khi thực thi, đọc lại chữ hoặc zoom nếu cần xác nhận hiển thị; chỉ báo thành công khi có kết quả thật.
+

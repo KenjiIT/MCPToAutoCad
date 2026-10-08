@@ -1,0 +1,2156 @@
+{
+  "schema": "horizun.inventory/1",
+  "generated_by": "scripts/generate-inventory.ps1",
+  "generated_from": "tools/list answered by the built server binary; enumerated values walked from the full input schemas of horizun://contract/tools served by the same binary",
+  "generated_from_server_exe": "<repo>\\src\\Horizun.Server\\bin\\Release\\net8.0\\horizun-mcp.exe",
+  "generated_from_server_sha": "08aaee619bbd2e0615c41a1adfef97b0c1df1c585fba88260d71099b02d65413",
+  "generated_from_contract_hash": "8c90d39bda0eaec89960fa93",
+  "measurement_profile": "isolated data root; permission_profile=unsafe_code; execute_python enabled; all tool packs",
+  "code_candidate_commit": "e4f16a5517a5e0d64b01b3ee788c21ea9450eb85",
+  "code_candidate_version": "2.1.6",
+  "code_candidate_stamp_source": "product_version",
+  "source_tree_clean_at_generation": true,
+  "source_tree_head_at_generation": "e4f16a5517a5e0d64b01b3ee788c21ea9450eb85",
+  "docs_only_commits_after_candidate": [],
+  "code_differs_from_candidate": false,
+  "provenance_means": "code_candidate_commit is read from the SERVER BINARY's own version stamp, so it names the code that was measured no matter what HEAD has moved on to since. docs_only_commits_after_candidate lists the commits between that candidate and HEAD that touch documentation ONLY - they are why HEAD can differ from the candidate without the tools changing. code_differs_from_candidate is true when a commit after the candidate touched src/ or tests/: then this inventory describes a binary that is no longer the tree, and must be regenerated.",
+  "counts": {
+    "tools": 123,
+    "reads": 45,
+    "writes": 78,
+    "destructive": 20,
+    "operations": 457,
+    "enumerated_variants": 1598
+  },
+  "definitions": {
+    "tools": "MCP tool names the built server lists.",
+    "reads": "tools annotated readOnlyHint - they cannot change the model.",
+    "operations": "distinct (tool, selector property, enum value) choices a command DISPATCHES on (operation, operations, action, actions, kind, mode, subtype, fitting), with repeated schema paths counted once. Includes suboperations and dispatch modes, not independent MCP tool names or a live-test count.",
+    "enumerated_variants": "every (tool, property, enum value) triple in every schema. An argument, NOT a proven behaviour.",
+    "not_measured_here": "whether any of it works. Verified behaviour is counted by the live harness artifact only."
+  },
+  "dispatch_selectors_declared": [
+    "operation",
+    "operations",
+    "action",
+    "actions",
+    "kind",
+    "mode",
+    "subtype",
+    "fitting"
+  ],
+  "dispatch_selectors_without_source_read": [],
+  "tools_detail": [
+    {
+      "tool": "get_document_info",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_health",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_save_document",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_open_document",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_relinquish_all",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_capture_view",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 11,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_verify_changes",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 3,
+      "enumerated_variants": 9,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "check",
+            "snapshot",
+            "compare_to"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_create_schedule",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_navigate",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 5,
+      "enumerated_variants": 5,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "select",
+            "clear_selection",
+            "zoom",
+            "select_and_zoom",
+            "open_view"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_create_elements",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 39,
+      "enumerated_variants": 339,
+      "operation_detail": [
+        {
+          "property": "kind",
+          "path": "elements.kind",
+          "values": [
+            "level",
+            "grid",
+            "wall",
+            "floor",
+            "ceiling",
+            "roof",
+            "room",
+            "family_instance",
+            "sprinkler",
+            "structural_framing",
+            "structural_column",
+            "duct",
+            "pipe",
+            "conduit",
+            "cable_tray",
+            "flex_pipe",
+            "flex_duct",
+            "fitting",
+            "wall_opening",
+            "slab_opening",
+            "beam_system",
+            "wall_foundation",
+            "accessory_inline",
+            "mep_system",
+            "shaft",
+            "room_separator",
+            "space",
+            "area",
+            "area_boundary",
+            "wall_profile",
+            "displacement",
+            "stairs",
+            "toposolid"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "fitting",
+          "path": "elements.fitting",
+          "values": [
+            "elbow",
+            "union",
+            "transition",
+            "tee",
+            "takeoff",
+            "cross"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "fitting",
+          "path": "elements.oneOf.fitting",
+          "values": [
+            "elbow",
+            "union",
+            "transition",
+            "tee",
+            "takeoff",
+            "cross"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_create_family",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 12,
+      "enumerated_variants": 48,
+      "operation_detail": [
+        {
+          "property": "kind",
+          "path": "forms.kind",
+          "values": [
+            "extrusion",
+            "blend",
+            "revolution",
+            "sweep",
+            "swept_blend"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "connectors.kind",
+          "values": [
+            "pipe",
+            "duct",
+            "electrical",
+            "conduit",
+            "cable_tray"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "family_lines.kind",
+          "values": [
+            "symbolic",
+            "model"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_system_types",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 22,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_list_elements",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_query_model",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 69,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_transform_elements",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 17,
+      "enumerated_variants": 26,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operations.operation",
+          "values": [
+            "wall_join",
+            "move",
+            "copy",
+            "rotate",
+            "mirror",
+            "pin",
+            "unpin",
+            "change_type",
+            "change_type_by_rule",
+            "realign_wall_sketch",
+            "set_curve",
+            "move_tag_head",
+            "set_tag_leader",
+            "array_linear",
+            "array_radial",
+            "rename_level",
+            "edit_sketch"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_curtain",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 12,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "read",
+            "add_grid_line",
+            "remove_grid_line",
+            "set_mullions",
+            "set_panel_type"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "add",
+            "remove"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_slab_shape",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 5,
+      "enumerated_variants": 8,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "read",
+            "add_point",
+            "add_split_line",
+            "modify_subelement",
+            "reset_shape"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_parameters",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 9,
+      "enumerated_variants": 11,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list_bindings",
+            "create_shared",
+            "create_project",
+            "rebind",
+            "remove_binding",
+            "global_list",
+            "global_create",
+            "global_set",
+            "global_delete"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_query_classification",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 5,
+      "enumerated_variants": 7,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "keynote_table",
+            "assembly_code",
+            "family_lookup_tables",
+            "unused_codes",
+            "missing_codes"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_framing",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "wall",
+            "ceiling",
+            "read",
+            "remove"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_create_railing",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 5,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_list_schedules",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_manage_views",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 53,
+      "enumerated_variants": 79,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "create_floor_plan",
+            "create_ceiling_plan",
+            "create_structural_plan",
+            "create_area_plan",
+            "create_3d",
+            "create_drafting",
+            "create_section",
+            "create_elevation",
+            "create_callout",
+            "duplicate_view",
+            "apply_template",
+            "set_phase",
+            "assign_scope_box",
+            "set_view_range",
+            "set_crop",
+            "set_annotation_crop",
+            "create_sheet",
+            "create_placeholder_sheet",
+            "convert_placeholder_sheet",
+            "duplicate_sheet",
+            "place_view",
+            "place_schedule",
+            "set_viewport_type",
+            "align_viewports",
+            "create_filter",
+            "apply_filter",
+            "color_by_value",
+            "set_element_overrides",
+            "hide_elements",
+            "isolate_elements",
+            "reset_temporary",
+            "set_category_visibility",
+            "create_legend",
+            "place_legend_component",
+            "edit_filter",
+            "order_filters",
+            "explain_graphics",
+            "create_template",
+            "set_template_controls",
+            "sheet_set_list",
+            "sheet_set_create",
+            "sheet_set_update",
+            "sheet_set_delete",
+            "renumber_sheets",
+            "create_perspective",
+            "set_sun_study"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "mode",
+          "path": "actions.mode",
+          "values": [
+            "center",
+            "center_x",
+            "center_y",
+            "left",
+            "right",
+            "top",
+            "bottom"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_get_schedule_data",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_export",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 94,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_deliver_ifc",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 13,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_get_dimension_references",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 23,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_query_dimensions",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 19,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_edit_dimensions",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 5,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_plan_from_cad",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_manage_cad_links",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 11,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "add",
+            "reload",
+            "repoint"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_apply_cad_update",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_plan_cad_update",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 10,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_audit_cad_model",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_apply_cad_plan",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_query_cad",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 6,
+      "enumerated_variants": 16,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "instances",
+            "layers",
+            "geometry",
+            "coverage",
+            "profile",
+            "blocks"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_cad_connect",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 6,
+      "enumerated_variants": 8,
+      "operation_detail": [
+        {
+          "property": "fitting",
+          "path": "junctions.fitting",
+          "values": [
+            "direct",
+            "elbow",
+            "tee",
+            "cross",
+            "transition",
+            "none"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_cad_review",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_cad_extract",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_cad_networks",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 14,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_cad_symbols",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_cad_unit_instances",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_query_detail_2d",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 5,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "resources",
+            "elements"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_audit_reinforcement",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_plan_reinforcement",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_apply_reinforcement",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_query_structure",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 10,
+      "enumerated_variants": 30,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "members",
+            "hosts",
+            "covers",
+            "rebar",
+            "reinforcement_systems",
+            "connections",
+            "coverage",
+            "quantities",
+            "analytical",
+            "loads"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_query_planimetry",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 6,
+      "enumerated_variants": 25,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "inventory",
+            "sheets",
+            "views",
+            "placements",
+            "annotations",
+            "references"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_audit_planimetry",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 37,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_fix_planimetry",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 10,
+      "enumerated_variants": 19,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "set_view_template",
+            "set_view_scale",
+            "rename_view",
+            "rename_sheet",
+            "place_title_block",
+            "move_viewport",
+            "move_schedule",
+            "clear_element_override",
+            "set_crop",
+            "set_view_display"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_pack_sheets",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 3,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_plan_annotations",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 32,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "auto_tags",
+            "intent_dimension",
+            "dimension_set",
+            "auto_dimension_grids",
+            "auto_dimension_levels",
+            "auto_dimension_curtain_walls",
+            "auto_dimension_openings"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_schedules",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 14,
+      "enumerated_variants": 36,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "create",
+            "duplicate",
+            "rename",
+            "add_fields",
+            "remove_fields",
+            "set_field",
+            "set_filters",
+            "set_sorting",
+            "set_options"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "actions.kind",
+          "values": [
+            "material_takeoff",
+            "sheet_list",
+            "view_list",
+            "revision_schedule",
+            "keynote_legend"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_plan_views",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 24,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "room_views",
+            "deliverable_set",
+            "delivery_open",
+            "delivery_status",
+            "delivery_record",
+            "delivery_approve",
+            "delivery_invalidate"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_groups",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 9,
+      "enumerated_variants": 11,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "create",
+            "add_members",
+            "remove_members",
+            "rename_type",
+            "duplicate_type",
+            "swap_type",
+            "ungroup",
+            "convert_to_link"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_worksets",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 6,
+      "enumerated_variants": 9,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "create",
+            "rename",
+            "move_elements",
+            "set_default",
+            "visibility"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_revisions",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 5,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "create_revision",
+            "update_revision"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_phases",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 8,
+      "enumerated_variants": 11,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "element_status",
+            "set_element_phases",
+            "create_phase_filter",
+            "edit_phase_filter",
+            "rename_phase",
+            "create_phase",
+            "assign_design_option"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_assemblies_parts",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 9,
+      "enumerated_variants": 21,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "create_parts",
+            "divide_parts",
+            "exclude_parts",
+            "restore_parts",
+            "dissolve_parts",
+            "create_assembly",
+            "assembly_views",
+            "disassemble"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_detail_2d",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 8,
+      "enumerated_variants": 11,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "create_detail_line",
+            "create_detail_arc",
+            "create_detail_polyline",
+            "create_filled_region",
+            "create_masking_region",
+            "place_detail_component",
+            "place_symbol",
+            "set_line_style"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_annotate",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 10,
+      "enumerated_variants": 18,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "text",
+            "tag",
+            "dimension",
+            "angular_dimension",
+            "radial_dimension",
+            "diameter_dimension",
+            "arc_length_dimension",
+            "spot_elevation",
+            "spot_coordinate",
+            "spot_slope"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_submit_job",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 7,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_execute_plan",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 3,
+      "enumerated_variants": 41,
+      "operation_detail": [
+        {
+          "property": "kind",
+          "path": "workflow.room_sheets.placements.kind",
+          "values": [
+            "plan",
+            "section",
+            "elevation"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_request_python_access",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_execute_python",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_model_scan",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 66,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_write_params_verified",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 5,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_delete_verified",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 2,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "ids",
+            "purge_unused"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_document_session",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 7,
+      "enumerated_variants": 17,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "open",
+            "save",
+            "save_as",
+            "close",
+            "inspect",
+            "sync_with_central",
+            "new_project"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_model_diff",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 9,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "snapshot",
+            "list",
+            "compare",
+            "colorize",
+            "explain",
+            "record_quality",
+            "quality_trend"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_file_info",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_acc_upload_status",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_audit_model",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 16,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "prevention_gate.operation",
+          "values": [
+            "save",
+            "save_as",
+            "sync_with_central",
+            "export",
+            "publish",
+            "close_with_save",
+            "batch_open_close"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_apply_corrections",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_quantities",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 15,
+      "operation_detail": [
+        {
+          "property": "mode",
+          "path": "mode",
+          "values": [
+            "volume",
+            "takeoff",
+            "room_finishes",
+            "carbon"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_clash",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_plan_mep",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 5,
+      "enumerated_variants": 8,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "route_run",
+            "network_census",
+            "system_analysis"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "kind",
+          "values": [
+            "pipe",
+            "duct"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_plan_from_ifc",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 12,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_apply_ifc_plan",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_code_check",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "check",
+            "travel_distance",
+            "energy_readiness",
+            "headroom"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_link_schedule",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "import",
+            "match",
+            "write",
+            "status_view"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_federation_check",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_audit_access",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 10,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_copy_between_documents",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 5,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_validate_ids",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 2,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "precheck",
+            "validate"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_materials",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 3,
+      "enumerated_variants": 3,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "create",
+            "duplicate",
+            "update"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_styles",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 9,
+      "enumerated_variants": 17,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list_object_styles",
+            "set_object_style",
+            "create_subcategory",
+            "list_line_styles",
+            "create_line_style",
+            "list_line_patterns",
+            "create_line_pattern",
+            "list_fill_patterns",
+            "create_fill_pattern"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_units",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 7,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "read",
+            "set",
+            "project_information",
+            "base_points"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_electrical",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 7,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list_panels",
+            "list_circuits",
+            "create_circuit",
+            "assign_panel",
+            "add_to_circuit",
+            "remove_from_circuit",
+            "panel_schedule"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_structural_connections",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_mep_routing",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 16,
+      "enumerated_variants": 28,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "read",
+            "set_rules",
+            "add_sizes",
+            "remove_sizes",
+            "resize",
+            "slope",
+            "size_by_flow",
+            "route",
+            "hangers"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "kind",
+          "values": [
+            "pipe",
+            "duct",
+            "conduit",
+            "cable_tray"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "action",
+          "path": "rules.action",
+          "values": [
+            "add",
+            "remove",
+            "move"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_connect_mep",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 7,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "actions.operation",
+          "values": [
+            "connect",
+            "disconnect"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_manage_links",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 13,
+      "enumerated_variants": 13,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "unload",
+            "reload",
+            "pin",
+            "unpin",
+            "add",
+            "add_instance",
+            "change_path",
+            "acquire_coordinates",
+            "scan_deviation"
+          ],
+          "source_read_confirmed": true
+        },
+        {
+          "property": "kind",
+          "path": "kind",
+          "values": [
+            "rvt",
+            "point_cloud",
+            "ifc"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_plan_structure",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 2,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "columns_on_grid_intersections",
+            "beams_along_grids"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_coordination",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 10,
+      "enumerated_variants": 16,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "update",
+            "export",
+            "import",
+            "import_navisworks",
+            "show",
+            "evidence",
+            "navisworks_readiness",
+            "prepare_navisworks",
+            "navisworks_status"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_resolve_clash",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "propose",
+            "apply",
+            "propose_opening",
+            "apply_opening"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_undo",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 2,
+      "enumerated_variants": 2,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "undo_last"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_set_keynote",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 3,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_family_apply",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_bind_shared_param",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_split_floor_loops",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_split_multilayer_walls",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 3,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_split_multilayer_slabs",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_ungroup_and_mark",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_regroup_by_param",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_copy_slab_elevations",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_embed_floors_in_toposolid",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_grade_toposolid_around_floors",
+      "read_only": false,
+      "destructive": true,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_rectangularize_walls",
+      "read_only": false,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_job_status",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_catalog_lookup",
+      "read_only": true,
+      "destructive": false,
+      "open_world": true,
+      "operations": 7,
+      "enumerated_variants": 7,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "leaf",
+            "search",
+            "bsdd_search",
+            "bsdd_search_dictionary",
+            "bsdd_class",
+            "bsdd_property",
+            "bsdd_dictionaries"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_project_context",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 6,
+      "enumerated_variants": 8,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "schema",
+            "validate",
+            "questions",
+            "draft",
+            "elicit",
+            "ids_from_loin"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_information_container",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 8,
+      "enumerated_variants": 21,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "name",
+            "stamp",
+            "verify",
+            "inspect",
+            "transition",
+            "transmittal",
+            "record_review",
+            "register"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_cde_cloud",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 7,
+      "enumerated_variants": 9,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list_projects",
+            "list_states",
+            "inspect",
+            "versions",
+            "issues_list",
+            "issue_create",
+            "issue_update"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_excel_read_rows",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_run_procedure",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 7,
+      "enumerated_variants": 10,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "start",
+            "advance",
+            "decide",
+            "record",
+            "reconcile",
+            "status",
+            "abandon"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_excel_write_rows",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 2,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_budget_compare",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 2,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "compare",
+            "export_bc3"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_power_bi_push",
+      "read_only": false,
+      "destructive": true,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    },
+    {
+      "tool": "horizun_selection_exchange",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 4,
+      "enumerated_variants": 4,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "publish",
+            "read",
+            "clear",
+            "capabilities"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_promote_script",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 10,
+      "enumerated_variants": 13,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "show",
+            "propose",
+            "review",
+            "approve",
+            "activate",
+            "deactivate",
+            "source",
+            "resolve",
+            "invocation"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_repair_memory",
+      "read_only": true,
+      "destructive": false,
+      "open_world": false,
+      "operations": 6,
+      "enumerated_variants": 10,
+      "operation_detail": [
+        {
+          "property": "operation",
+          "path": "operation",
+          "values": [
+            "list",
+            "advice",
+            "observe",
+            "remedy",
+            "quarantine",
+            "release"
+          ],
+          "source_read_confirmed": true
+        }
+      ]
+    },
+    {
+      "tool": "horizun_target",
+      "read_only": false,
+      "destructive": false,
+      "open_world": true,
+      "operations": 0,
+      "enumerated_variants": 0,
+      "operation_detail": []
+    }
+  ]
+}

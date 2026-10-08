@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-10-07",
+    "scope": ["/chat", "/settings", "/", "/tools"],
+    "macrostructure": "CAD-workbench",
+    "theme": "paper-workspace",
+    "locked_system": "design.md",
+    "skill": "redesign-existing-projects",
+    "evidence": "../.harness/artifacts/uc4n-redesign/checks.json"
+  }
+]

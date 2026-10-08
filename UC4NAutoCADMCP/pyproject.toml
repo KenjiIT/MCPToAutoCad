@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["../UC4NAutoCADMCPClient"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["upstream", ".venv", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

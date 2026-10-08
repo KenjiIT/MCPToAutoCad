@@ -1,0 +1,281 @@
+# policy.yaml — NGUỒN CHÂN LÝ DUY NHẤT (PoC vendor-neutral).
+# Lõi `bin/llmwiki-validate.py` và `gen-converters.py` đều đọc file này.
+# Mirror R1/R2 của harness/policy.yaml nhưng ở dạng máy đọc được (glob, layer).
+#
+# enforce_at: 'session' = lúc agent định ghi (hook/CLI chặn ngay).
+#             'repo'    = lúc commit/PR (pre-commit + CI).
+# Đây là chỗ DÀY tùy ý — thêm luật ở đây, KHÔNG sửa code adapter.
+
+version: 1
+
+rules:
+  no_write_raw:
+    id: R1
+    name: no-write-raw
+    kind: deny_write
+    statement: "raw/ là inbox của con người — agent chỉ được đọc, không ghi."
+    enforce_at: [session]          # KHÔNG repo: con người commit file raw/ là hợp lệ
+    deny_write_globs:
+      - "**/raw/**"
+      - "raw/**"
+
+  require_origin:
+    id: R2
+    name: origin-required
+    kind: require_section
+    statement: "Mọi wiki content file phải có section '## Origin' để truy được nguồn gốc."
+    enforce_at: [session, repo]
+    require_section: "## Origin"
+    target_globs:                          # khớp global origin_required CONTENT_DIRS (6 dir)
+      - "**/wiki/concepts/**/*.md"
+      - "**/wiki/entities/**/*.md"
+      - "**/wiki/sources/**/*.md"
+      - "**/wiki/draft/**/*.md"
+      - "**/wiki/architecture/**/*.md"
+      - "**/wiki/tours/**/*.md"
+    exclude_basenames: ["README.md", "_template.md", "index.md", "log.md"]
+    exclude_globs: ["**/draft/archive/**"]   # nháp đông cứng (tidy dời vào, tracked) — không soi lại
+
+  folder_structure:
+    id: R5
+    name: folder-structure
+    kind: forbid_root
+    statement: "File wiki phải nằm trong concepts/entities/sources/draft/architecture/tours — KHÔNG ở wiki/ root."
+    enforce_at: [session, repo]
+    root_globs: ["**/wiki/*.md"]               # file .md trực tiếp dưới wiki/ (1 segment) → chặn
+    allow_basenames: ["index.md", "log.md", "README.md", "active-context.md", "decisions.md"]
+    allow_subdirs: ["concepts", "entities", "sources", "draft", "architecture", "tours", "skills"]  # khớp global: subdir NGOÀI set này cũng chặn (wiki/junk/x.md). "skills": cây skill-doc 68 file có từ 0363f5d (whiteboard/wiki-graph đọc + wikilink trỏ vào) — policy chép theo thực tế đã thành hình, không phải mở cửa mới.
+
+  proposal_complete:
+    id: R7
+    name: proposal-complete
+    kind: conditional_require
+    statement: "Bộ ba một feature phải đủ chất. SPEC (có '## Plan' + còn 'proposed') phải khai '## Agent Task Assignment' + link Sequence diagram + '## Global constraints'. PLAN (file '*-PLAN.md', thứ bơm thẳng vào agent context=0) phải khai Files chính xác + Interfaces + code từng bước; cả hai cấm placeholder. Chi tiết nhánh PLAN nằm ở validator production proposal_complete.py (declarative không diễn tả nổi check per-task)."
+    enforce_at: [session, repo]
+    target_globs: ["**/wiki/sources/draft/**/*.md", "**/wiki/draft/**/*.md"]
+    exclude_basenames: ["_template.md", "README.md", "index.md", "log.md"]   # template/meta miễn R7 (khớp production proposal_complete.py)
+    exclude_globs: ["**/draft/archive/**"]   # nháp đông cứng (tidy) — CI từng cắn nháp cũ khi chạm (GH#146)
+    when_contains: ["## Plan", "proposed"]
+    need_contains: ["## Agent Task Assignment", "Sequence diagram", "## Global constraints"]
+    # Model TỰ ĐIỀN mặc định là bình thường (khai bằng tag '(default)' trong ## Assumptions).
+    # Nhưng nhóm auth / dữ liệu / tiền / pháp lý / ranh giới tin cậy thì một mặc định sai =
+    # hỏng kiến trúc → model phải leo lên '[CẦN LÀM RÕ: …]', và SPEC còn treo nó thì KHÔNG
+    # được mang ra cổng duyệt.
+    forbid_contains: ["[CẦN LÀM RÕ:"]
+
+  plan_executable:
+    id: R18
+    name: plan-executable
+    kind: conditional_require
+    statement: "PLAN thi hành (`*-PLAN.md`, do /plan sinh) là thứ BƠM THẲNG vào agent context=0 — nó không thừa hưởng context nào và không hỏi lại được, gặp chỗ mơ hồ nó đoán rồi im lặng. Nên PLAN phải khai đường dẫn file chính xác + Interfaces (Consumes/Produces) + ràng buộc bao trùm."
+    enforce_at: [session, repo]
+    target_globs: ["**/wiki/sources/draft/*-PLAN.md", "**/wiki/draft/*-PLAN.md"]
+    exclude_basenames: ["_template.md", "README.md"]
+    exclude_globs: ["**/draft/archive/**"]
+    when_contains: ["### Task"]
+    need_contains: ["**Files:**", "**Interfaces:**", "## Global constraints", "**Thoả:**"]
+    # TRẦN của bản khai báo: engine vendor-neutral chỉ so 'file có chứa X' nên nó gác ở mức FILE.
+    # Bản đầy đủ — kiểm TỪNG task, cấm placeholder, và ĐỐI CHIẾU từng `FR-xxx` của SPEC anh em
+    # với các dòng `**Thoả:**` (bỏ sót id nào là chặn, in đúng tên id) — nằm ở validator production
+    # `proposal_complete.py`. Repo nào có validator Python thì được gác chặt hơn.
+
+  okf_frontmatter:
+    id: R9
+    name: okf-frontmatter
+    kind: require_frontmatter
+    statement: "Wiki content (concepts/entities/sources/draft/architecture/tours — KỂ CẢ nháp) phải có YAML frontmatter + 'type' không rỗng (OKF v0.1). Scope khớp global production: siết frontmatter ngay từ nháp."
+    enforce_at: [session, repo]
+    target_globs: ["**/wiki/concepts/**/*.md", "**/wiki/entities/**/*.md", "**/wiki/sources/**/*.md", "**/wiki/draft/**/*.md", "**/wiki/architecture/**/*.md", "**/wiki/tours/**/*.md"]
+    exclude_basenames: ["README.md", "_template.md", "index.md", "log.md", "decisions.md", "active-context.md"]
+    exclude_globs: ["**/draft/archive/**"]   # nháp đông cứng (tidy) — không soi lại
+    require_key: type
+
+  seq_html_glass:
+    id: R11
+    name: seq-html-glass-style
+    kind: conditional_require
+    statement: "Seq diagram HTML (*-seq.html) PHẢI theo style docs-site-macos liquid-glass — KHÔNG theme flat/tối tự chế (bài học 250626 'sao xấu thế'). Bắt buộc: backdrop-filter glass + nền sáng linear-gradient(180deg,#f7fbff…) + edge-highlight inset."
+    enforce_at: [session, repo]            # 2026-06-27: ĐÃ migrate 8 seq html cũ → glass → bật repo-tier (pre-commit/CI). Lịch sử giờ sạch.
+    target_globs:
+      - "**/llmwiki/html/*-seq.html"
+      - "**/html/*-seq.html"
+    when_contains: ["diagram-box"]         # là 1 seq diagram theo template chuẩn
+    need_contains:                          # 3 dấu hiệu glass mà flat theme không bao giờ có
+      - "backdrop-filter"
+      - "linear-gradient(180deg,#f7fbff"
+      - "inset 0 1px 0 rgba(255,255,255"
+
+  evidence_terminal:
+    id: R19
+    name: evidence-terminal
+    kind: content_check
+    statement: "Tai lieu mang ket luan co khoi ```evidence-chain PHAI de MOI duong di tu goc toi la ket thuc o nut CHUNG CU (observed/tool-record/graph-edge/web/parametric/absence), khong duoc ket thuc o nut suy luan. web doi url tuyet doi tro DUNG CHO da doc + ngay truy cap + trich nguyen van; parametric (kien thuc tu TRAINING cua model) doi origin + co unverified va KHONG duoc lam diem cuoi duy nhat. Chuoi vong tron = khong hop le."
+    enforce_at: [session, repo]
+    # layout dot: dự án downstream cài vào .llmwiki/ — thiếu biến thể này luật im lặng (GH#112).
+    target_globs: ["**/llmwiki/wiki/**/*.md", "**/.llmwiki/wiki/**/*.md"]
+    when_contains: ["```evidence-chain"]
+    handler: "harness/validators/evidence_terminal.py --check FILE. Cong tac 3 tang uu tien tu hep toi rong: co --no-evidence-chain > env OVERSTACK_EVIDENCE_TERMINAL > harness/evidence-terminal.config.yaml (enabled). Tat o tang nao van in mot dong len stderr."
+    blocking: false
+
+  pull_before_change:
+    id: R12
+    name: pull-before-change
+    kind: process_gate                     # git-state gate — KHÔNG phải content-check → llmwiki-validate bỏ qua. CHỈ 2 điểm enforce phủ được mọi vendor.
+    statement: "(B) TRƯỚC khi bắt đầu việc / fan-out đa-agent: orchestrator chạy pull-gate sweep 1 lần (base tươi cho cả đàn agent). (C) TRƯỚC khi push: pre-push hook git-level chặn nếu local SAU remote. KHÔNG có hook chặn từng-edit (per-edit PreToolUse) — cố tình bỏ: cost cao, lệch vendor, đã được (B) phủ."
+    enforce_at: [session, repo]            # session = (B) pre-work sweep do orchestrator chạy ở workflow Step 0 · repo = (C) gate2 pre-push (vendor-neutral floor)
+    prework_sweep_cmd: "harness/poc-vendor-neutral/bin/pull-gate.sh gate1"   # (B) — orchestrator gọi 1 lần trước khi làm/dispatch; KHÔNG gắn vào PreToolUse
+    prepush_cmd: "harness/poc-vendor-neutral/bin/pull-gate.sh gate2"          # (C) — .git/hooks/pre-push + .pre-commit stage pre-push
+
+  # ── Repo-gate (R6) — reconcile 2 policy 2026-06-27 ──────────────────────────
+  # R6 vốn chỉ có ở harness/policy.yaml (L0 production). Thêm vào đây để PoC enumerate
+  # đủ rule-set (drift-test gác hai policy khớp). Enforce = chính pre-commit framework.
+  verify_before_commit:
+    id: R6
+    name: verify-before-commit
+    kind: repo_gate                        # documentary: validator bỏ qua; gate thật = pre-commit + CI + skill
+    statement: "Mọi commit phải qua gate: validators + lint + drift-test + R11 seq-glass. Fail = không commit được."
+    enforce_at: [repo]
+    handler: ".pre-commit-config.yaml + .github/workflows/harness.yml + skill verify-before-commit"
+    blocking: true
+
+  # ── Hook-event rules (R3/R4/R8/R10) — T1 reconcile 2026-06-27 ────────────────
+  # Enforce bằng HOOK SỰ KIỆN (không phải content-check) → kind `hook_event`,
+  # llmwiki-validate bỏ qua an toàn. Wiring thật vẫn HARDCODE ở gen-converters.py →
+  # harness-events.py / production hooks; ghi vào đây để policy.yaml LIỆT KÊ ĐỦ luật
+  # (hết rò "nguồn chân lý"). Làm policy DRIVE wiring là bước sau. Xem [[rule-registry]].
+  index_sync:
+    id: R3
+    name: index-sync
+    kind: hook_event
+    statement: "wiki/index.md phải liệt kê đúng tập file wiki tồn tại; phiên có sửa wiki mà index lệch → chặn kết thúc lượt."
+    enforce_at: [session, repo]            # session = Stop hook · repo = pre-commit (index_sync.py)
+    event: Stop
+    event_action: stop                     # arg cho harness-events.py (gen-converters SINH hook từ đây)
+    timeout: 15
+    handler: "harness/validators/index_sync.py · harness-events.py stop · llmwiki/.claude/hooks/stop.py"
+    blocking: true
+
+  audit_log:
+    id: R4
+    name: audit-log
+    kind: hook_event
+    statement: "Mọi tool-call ghi .claude/audit/audit.jsonl (timestamp) + sinh log.md người-đọc-được. Không chặn."
+    enforce_at: [session]
+    event: PostToolUse
+    event_action: audit
+    matcher: "Write|Edit|MultiEdit"
+    timeout: 10
+    handler: "harness-events.py audit · llmwiki/.claude/hooks/post_tool_use.py"
+    blocking: false
+
+  session_health:
+    id: R8
+    name: session-health
+    kind: hook_event
+    statement: "Đầu phiên: báo số rule đang gác + CHECK DRIFT policy/version vs remote (cảnh báo nếu lệch → /sync-template). Không chặn."
+    enforce_at: [session]
+    event: SessionStart
+    event_action: session
+    timeout: 10
+    handler: "harness-events.py session · llmwiki/.claude/hooks/session_start.py (health-check.py)"
+    blocking: false
+
+  docs_gate:
+    id: R10
+    name: docs-gate
+    kind: hook_event
+    statement: "Mỗi N prompt (default 5) chưa dùng /docs-site-macos hay /orca-workflow → inject directive đề nghị bổ sung docs. Báo cáo, không chặn."
+    enforce_at: [session]
+    event: UserPromptSubmit
+    event_action: docs
+    timeout: 10
+    handler: "harness-events.py docs · llmwiki/.claude/hooks/user_prompt_submit.py"
+    blocking: false
+
+  decision_adr:
+    id: R13
+    name: decision-to-adr
+    kind: content_check
+    statement: "Quyết định 'architecture' trong decisions.md phải ref một ADR; ADR cho EDIT tự do; XÓA ADR chỉ khi đã bị đè (Superseded by / supersedes ADR-N)."
+    enforce_at: [repo]
+    target_globs: ["**/wiki/decisions.md", "**/wiki/sources/adr/**/*.md"]
+    handler: "harness/validators/decision_adr.py · pre-commit (decision-adr-link/adr-delete-guard) + CI repo-health"
+    blocking: true
+
+  no_ai_attribution:
+    id: R15
+    name: no-ai-attribution
+    kind: process_gate                     # git commit-msg gate — KHÔNG content-check → llmwiki-validate bỏ qua. Enforce ở tầng git (mọi vendor).
+    statement: "Commit message KHÔNG được ghi công cho AI (Co-Authored-By: Claude…, Generated with Claude Code, 🤖). Author/committer chỉ là danh tính người. Fail-open nếu thiếu file message."
+    enforce_at: [repo]                     # repo = git commit-msg hook (pre-commit stage commit-msg) + CI
+    commitmsg_cmd: "python3 harness/validators/no_ai_attribution.py --commit-msg"   # documentary — pre-commit nối path COMMIT_MSG
+    handler: "harness/validators/no_ai_attribution.py · pre-commit stage commit-msg (no-ai-attribution). ADR-016."
+    blocking: true
+
+  patterns_guard:
+    id: R14
+    name: patterns-protected
+    kind: deny_write
+    statement: "Kho pattern llmwiki/patterns/ chỉ sửa khi user cho phép (env LLMWIKI_PATTERNS_UNLOCK=1) — agent không tự ý sửa kho tham chiếu (raw/ nhưng thấp hơn một bậc)."
+    enforce_at: [session]
+    deny_write_globs:
+      - "**/llmwiki/patterns/**"
+      - "llmwiki/patterns/**"
+    # layout dot: dự án downstream cài vào .llmwiki/ — thiếu biến thể này luật im lặng (GH#112).
+      - "**/.llmwiki/patterns/**"
+      - ".llmwiki/patterns/**"
+    handler: "harness/validators/patterns_guard.py · PreToolUse; unlock qua env. Adapter pattern-library.config.yaml (verified:false). ADR-014."
+
+  report_show_path:
+    id: R16
+    name: report-show-path
+    kind: content_check
+    statement: "HTML report/visualization dưới llmwiki/html/ (trừ archive/, assets/) phải chứa đường dẫn tuyệt đối của chính nó (footer/titlebar) — người xem biết file nằm đâu để mở lại/sửa."
+    enforce_at: [session]
+    # layout dot: dự án downstream cài vào .llmwiki/ — thiếu biến thể này luật im lặng (GH#112).
+    target_globs: ["**/llmwiki/html/*.html", "**/.llmwiki/html/*.html"]
+    handler: "harness/validators/report_show_path.py · PostToolUse (llmwiki/.claude/hooks/post_tool_use.py nhánh .html). Nguồn: feedback 020726 + rule skill fdk."
+    blocking: true
+
+  problem_tree_flush:
+    id: R17
+    name: problem-tree-flush
+    kind: hook_event
+    statement: "SessionEnd: phiên có diff/untracked chạm bề mặt framework (skills/ harness/ llmwiki/ fdk/) mà problem-tree chưa được cập nhật → hook tự append node stub pending vào llmwiki/html/fdk-problem-tree.html bằng code thuần (0 token). Lần /fdk kế tiếp distill. Báo cáo, không chặn — SessionEnd không block được."
+    enforce_at: [session]
+    event: SessionEnd
+    event_action: session-end
+    timeout: 15
+    handler: "harness-events.py session-end · llmwiki/.claude/hooks/session_end.py::flush_problem_tree. Đích: tắt app bình thường thì cây truy vết vẫn nằm đúng chỗ (feedback 020726)."
+    blocking: false
+
+  touched_paths:
+    id: R21
+    name: touched-paths
+    kind: hook_event
+    statement: "Stop: cuối MỖI lượt, hook in cho user (systemMessage, 0 token của model) hai khối. (1) Trang NGƯỜI ĐỌC phiên này tạo/sửa trong wiki (.md/.html dưới llmwiki/, .llmwiki/, fdk/wiki/ — trừ index/log/provenance/raw/skills và trang tự sinh lại như atlas, control-room, overstack.html): mỗi dòng ghi TIÊU ĐỀ THẬT của trang (frontmatter title hoặc <title>) kèm link file:// tuyệt đối, thứ tự HTML → graph → PLAN → còn lại, trần 10 (dư ghi +N). (2) Mọi file khác KHÔNG rải path: một dòng mỗi nhóm (test · skill · dữ liệu graph/sổ máy · trang tự sinh lại · CI/cấu hình · raw · code · tài liệu ngoài wiki · khác) gồm nhãn + số lượng + tối đa 3 tên. (3) Server ĐANG CHẠY để bấm mở: process đang LISTEN có cwd nằm trong dự án → http://localhost:PORT/ kèm lệnh + thư mục chạy; nếu một cloudflared đang chạy trỏ ingress về port đó thì in hostname thật bên cạnh (⇄ https://…); hostname tunnel đang sống trỏ dịch vụ ngoài cũng được liệt kê. Chỉ đọc lsof/ps/config tunnel, không mở kết nối. Tắt riêng OVERSTACK_TOUCHED_SERVERS=0. Nguồn: Write/Edit trong transcript + git status mtime >= mốc đầu phiên + file thuộc commit tạo trong phiên. Tắt OVERSTACK_TOUCHED_PATHS=0; trần OVERSTACK_TOUCHED_CAP."
+    enforce_at: [session]
+    event: Stop
+    event_action: stop                     # chạy CHUNG Stop hook với R3 (stop.py) — cùng lệnh harness-events.py stop
+    handler: "llmwiki/.claude/hooks/stop.py::_emit_touched · hooklib.session_touched_files/touched_message. Nguồn: feedback user 19/09/2026 'path đâu mà coi?'."
+    blocking: false
+
+  html_slop:
+    id: R22
+    name: html-slop
+    kind: content_check
+    statement: 'Trang HTML nằm trực tiếp trong một thư mục html/ không được mang ba dấu hiệu AI-slop mà cổng tĩnh đã có luật: (a) sọc viền MÀU một cạnh (border-left|right >= 3px solid màu bão hoà) trên thẻ/nút/callout; (b) gradient-text (background-clip:text + chữ trong suốt); (c) thiếu chế độ tối (không [data-theme=dark], không prefers-color-scheme). Artifact archify được miễn (viewer tự chứa, như R16/R20).'
+    enforce_at: [session]
+    target_globs: ["**/html/*.html"]
+    handler: "harness/validators/html_slop.py · PostToolUse (llmwiki/.claude/hooks/post_tool_use.py nhánh .html, cùng R16/R20). Validator GỌI fdk/tools/frontend-antipattern.py chứ không chép regex, nên hai cổng không bao giờ lệch luật. Vá máy-làm-được: fdk/tools/html-slop-fix.py. Nguồn: user 20/09/2026 'cơ chế bắt slop bắt buộc chưa tự bắt nó'."
+    blocking: true
+
+  html_docs_shell:
+    id: R20
+    name: html-docs-shell
+    kind: content_check
+    statement: 'Trang HTML nằm trực tiếp trong một thư mục html/ phải có vỏ tài liệu nhất quán, bất kể skill nào sinh: (a) hơn 3 mục (<section id> hoặc <h2>) thì phải có <nav> chứa ít nhất 3 link #anchor; (b) sơ đồ archify nhúng qua <iframe> phải dùng preset macos như trang chứa. Thoát tường minh: <meta name="overstack-nav" content="none"> / <meta name="overstack-preset" content="<preset>">.'
+    enforce_at: [session]
+    target_globs: ["**/html/*.html"]
+    handler: "harness/validators/html_docs_shell.py · PostToolUse (llmwiki/.claude/hooks/post_tool_use.py nhánh .html, cùng R16). Nguồn: GH#155 + GH#154."
+    blocking: true

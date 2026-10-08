@@ -1,0 +1,112 @@
+# Third-party notices
+
+Horizun MCP is free and open source under Apache-2.0 (see [LICENSE](LICENSE)). It **redistributes** the
+components below, each under its own licence, and those licences require their
+notices to travel with the files.
+
+This list was produced from the payload that is actually installed — the staged
+`plugin\<year>` folders and `server\` — not from the project file. A dependency
+that is referenced but never copied imposes nothing; a dependency that lands on a
+user's disk does, whatever the csproj says about it.
+
+**This is a technical inventory, not a legal opinion.** It states what ships and
+under which licence each component is published. Whether the resulting
+distribution satisfies every obligation of every licence is a question for a
+lawyer, and nothing here should be read as an answer to it.
+
+---
+
+## Redistributed with the Revit add-in
+
+| Component | Version | Licence | Why it ships |
+| --- | --- | --- | --- |
+| Newtonsoft.Json | 13.0.3 | MIT | JSON on the pipe and in every reply. Revit ships its own copy, but the add-in cannot rely on which version. |
+| IronPython | 3.4.2 | Apache-2.0 | The scripting escape hatch. |
+| PdfPig (UglyToad.PdfPig assemblies) | 0.1.13 | Apache-2.0 | Reopens exported PDFs to verify page counts and page geometry. [Package, license and source](https://www.nuget.org/packages/PdfPig/0.1.13). |
+| Microsoft.Bcl.HashCode | 6.0.0 | MIT | Compatibility dependency of PdfPig. |
+| IronPython.Modules | 3.4.2 | Apache-2.0 | Ships with IronPython; required by the standard library. |
+| IronPython.SQLite | 3.4.2 | Apache-2.0 | Ships with IronPython. Contains a managed port of SQLite (public domain). |
+| IronPython.Wpf | 3.4.2 | Apache-2.0 | Ships with IronPython. |
+| Microsoft.Dynamic | 1.3.5 | Apache-2.0 | The DLR, which IronPython runs on. |
+| Microsoft.Scripting | 1.3.5 | Apache-2.0 | The DLR. |
+| Microsoft.Scripting.Metadata | 1.3.5 | Apache-2.0 | The DLR. |
+| Mono.Unix | 7.1.0 | MIT | Pulled in transitively by IronPython. |
+| System.CodeDom | 8.0.0 | MIT | Pulled in transitively by IronPython. |
+| System.Text.Encoding.CodePages | 8.0.0 | MIT | Registers codepage 1252, without which the IronPython engine cannot start on .NET 8. **net8 payloads only** — .NET 10 provides it. |
+
+### The Python standard library — 614 files
+
+Each plugin payload carries `lib\` with **614 `.py` files**: the IronPython
+standard library, which is a derivative of CPython's.
+
+It is distributed under the **PSF License Agreement**, with some individual
+modules under other permissive licences (MIT, BSD) as noted in their own headers.
+The PSF licence requires its notice and a summary of changes to accompany
+redistribution.
+
+This is the obligation this repository had not previously named anywhere, and it
+is the largest single body of third-party code it ships.
+
+`scripts/audit-python-stdlib.ps1` inventories and hashes that staged library,
+requires the 614-file Python set and the pinned non-Python distribution set,
+compares every byte across the five Revit-year payloads, checks the package and
+licence declarations, and applies documented high-confidence static risk rules.
+It can emit JSON and SARIF and returns a failing invocation on any finding. This is
+reproducible static triage, not a legal review, semantic source audit,
+vulnerability guarantee or runtime sandbox.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/audit-python-stdlib.ps1 `
+  -Json dist/python-stdlib-audit.json -Sarif dist/python-stdlib-audit.sarif
+```
+
+## Redistributed with the MCP server
+
+| Component | Version | Licence |
+| --- | --- | --- |
+| Newtonsoft.Json | 13.0.3 | MIT |
+| Microsoft .NET runtime and native host (`win-x64`, self-contained publish) | 8.x, exact files and hashes in `sbom.json` | MIT |
+
+Embedded in the server binary as resources:
+
+| Component | Version | Licence | Why it ships |
+| --- | --- | --- | --- |
+| buildingSMART IDS schema, `ids.xsd` (`schemas/ids/ids-1.0.xsd`) | 1.0.0 | CC BY-ND 4.0, © buildingSMART International Ltd. ([source](https://github.com/buildingSMART/IDS/blob/development/Schema/ids.xsd)) | Validates the IDS files `horizun_project_context operation=ids_from_loin` generates. Redistributed **unmodified**; the two W3C XML Schema definitions it imports are supplied by a separate file of our own (`schemas/ids/xmlschema-subset.xsd`, Apache-2.0), not by editing it. |
+| IFC entity names (`schemas/ids/ifc-entities.txt`) | IFC2X3 TC1, IFC4 ADD2 TC1, IFC4X3 ADD2 | names only, extracted from buildingSMART's published EXPRESS schemas (IFC4X3_ADD2 via IfcOpenShell v0.8.0's generated header) | Lets `validate` tell whether a LOIN names an entity the targeted schema has. No definitions or documentation text are copied. |
+
+The server is self-contained so a release installation does not depend on an
+already-installed .NET runtime. `sbom.json` is generated from `dist/stage` as a
+CycloneDX 1.6 document and inventories every runtime/app/file byte separately.
+
+## Referenced but NEVER redistributed
+
+**Autodesk Revit API** (`RevitAPI.dll`, `RevitAPIUI.dll`). Referenced at compile
+time with `Private=false`, so no Autodesk assembly is copied to the output or
+included in the installer. Revit loads its own from its own installation folder.
+This is deliberate and load-bearing: redistributing them would be both a licence
+problem and a technical one, since the versions must match the running Revit
+exactly.
+
+---
+
+## Vulnerability audit
+
+`dotnet list package --vulnerable --include-transitive`, run against both
+projects on 2026-07-29:
+
+```
+Horizun.Server : no vulnerable packages given the current sources
+Horizun.Revit  : no vulnerable packages given the current sources
+```
+
+"Given the current sources" is doing real work in that sentence: it means the
+NuGet advisory database as it stood that day. It is a snapshot, not a guarantee,
+and it says nothing about the Python standard library or about Revit's own
+assemblies. Re-run it before every release; CI does.
+
+## Signing
+
+Release notes and the manifest must state the actual signature state. A self-signed
+signature can support controlled verification but is not a publicly trusted
+publisher identity; on a clean machine it can still produce a Windows/Revit prompt.
+See [docs/security-model.md](docs/security-model.md).

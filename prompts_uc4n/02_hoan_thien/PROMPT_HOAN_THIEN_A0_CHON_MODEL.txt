@@ -1,0 +1,9 @@
+A0 — CHỌN MODEL, CHƯA THÊM NHÃN/KÍCH THƯỚC
+Tiếp tục bản vẽ đang hoạt động. Chỉ lập bước layout_set_current với name="Model" nếu schema runtime xác nhận tham số name. Không tạo/sửa hình học, không lưu hoặc đóng bản vẽ.
+Sau khi phương án chuyển Model đã được thực thi, lập lượt đọc riêng gồm layout_list, drawing_info, system_get_variable(name="INSUNITS"), entity_list và layer_list (tối đa 10 lời gọi) để xác nhận:
+- current="Model", đơn vị mm.
+- Phòng đã dựng với tường/cửa; các layer kiến trúc có thật.
+Nếu phòng chưa có trong Model, báo cần hoàn thành prompt dựng phòng trước khi chạy A1. Không tự dựng lại phòng trong A0.
+Đây là hai phương án liên tiếp; không gộp thao tác đọc thành điều kiện giả mà executor không tự đánh giá. Không giả định đã chuyển Model trước khi có kết quả thật.
+Cần cấp cho AI các tool nêu trên. Nếu client không giữ lịch sử, gửi kết quả đọc kèm file A1.
+

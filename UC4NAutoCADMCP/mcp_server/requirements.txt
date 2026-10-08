@@ -1,0 +1,2 @@
+-e ./upstream[com,pdf]
+fastmcp==3.4.8

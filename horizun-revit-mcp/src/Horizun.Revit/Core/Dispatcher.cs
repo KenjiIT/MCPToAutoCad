@@ -1,0 +1,1209 @@
+﻿// -----------------------------------------------------------------------------
+// Horizun Revit MCP — original Horizun code.
+//
+// The UI-thread bridge and command registry.
+//
+// The Revit API may only be touched on Revit's own UI thread. Our transport runs
+// on a background thread (a named pipe). This class is the crossing: a background
+// caller hands us a command name + params, we raise a Revit ExternalEvent, Revit
+// calls us back on the UI thread where we run the command, and we hand the result
+// back to the blocked caller. ExternalEvent is the documented, supported way to
+// do exactly this (Autodesk's own async-API guidance).
+//
+// One request EXECUTES at a time; later callers wait in a bounded FIFO queue.
+// RequestGate owns the queue, per-request completion signals and cancellation
+// before start. Once work reaches the UI thread it is not interruptible, so the
+// distinction between queued and running is a safety boundary, not presentation.
+// -----------------------------------------------------------------------------
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using Autodesk.Revit.UI;
+using Newtonsoft.Json.Linq;
+using Horizun.Contracts;
+
+namespace Horizun.Revit.Core
+{
+    public sealed class Dispatcher : IExternalEventHandler
+    {
+        // A short, privacy-safe operational fact for the local Revit UI and
+        // horizun_health. Parameters and model names never enter it: an operator
+        // needs to know that Revit is busy and with which tool, not project data.
+        private static readonly object ActivityLock = new object();
+        private static string _activeTool;
+        private static DateTime _activeToolStartedUtc;
+
+        public static string CurrentActivityDescription()
+        {
+            lock (ActivityLock)
+            {
+                if (string.IsNullOrEmpty(_activeTool)) return null;
+                int seconds = (int)Math.Max(0, (DateTime.UtcNow - _activeToolStartedUtc).TotalSeconds);
+                return "Revit is executing '" + _activeTool + "' (" + seconds + " s elapsed).";
+            }
+        }
+
+        private static void BeginActivity(string tool)
+        {
+            lock (ActivityLock)
+            {
+                _activeTool = tool;
+                _activeToolStartedUtc = DateTime.UtcNow;
+            }
+        }
+
+        private static void EndActivity(string tool)
+        {
+            lock (ActivityLock)
+            {
+                if (string.Equals(_activeTool, tool, StringComparison.OrdinalIgnoreCase))
+                {
+                    _activeTool = null;
+                    _activeToolStartedUtc = default(DateTime);
+                }
+            }
+        }
+
+        private readonly Dictionary<string, ICommand> _commands =
+            new Dictionary<string, ICommand>(StringComparer.OrdinalIgnoreCase);
+
+        // Every name handed to Register, in order, repeats included. The dictionary
+        // above cannot remember a second registration of one name; this can, and
+        // it is what the contract comparison at startup reads.
+        private readonly List<string> _registrationAttempts = new List<string>();
+        private readonly HashSet<string> _registeredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private ExternalEvent _event;
+
+        private readonly RequestGate _gate = new RequestGate();
+        private readonly DurableCommandLedger _idempotency =
+            new DurableCommandLedger(retentionLog: message => Log.Info(message));
+        private bool _preferAsync;
+        private volatile bool _shuttingDown;
+        private int _backgroundRaiseScheduled;
+        private volatile string _documentSnapshot;
+        internal string DocumentSnapshot => _documentSnapshot;
+        private void CaptureDocument(UIApplication app)
+        {
+            try
+            {
+                var doc = app.ActiveUIDocument?.Document;
+                _documentSnapshot = doc == null ? "" : DocumentGate.IdentityOf(doc, app.Application.VersionNumber).Fingerprint();
+            }
+            catch { _documentSnapshot = null; }
+        }
+
+        /// <summary>
+        /// The ExternalEvent behind IWorkRaiser, which is the ONLY Revit-dependent part
+        /// of deciding what a refused raise means.
+        ///
+        /// Denied needs a Revit that is shutting down, so that path was "reasoned and
+        /// compiled" and could not be exercised. Everything on the other side of this
+        /// interface is now an ordinary test case.
+        /// </summary>
+        private sealed class ExternalEventRaiser : IWorkRaiser
+        {
+            private readonly ExternalEvent _ev;
+            public ExternalEventRaiser(ExternalEvent ev) { _ev = ev; }
+
+            public RaiseOutcome Raise()
+            {
+                if (_ev == null) return RaiseOutcome.Unknown;
+                return Map(_ev.Raise());
+            }
+        }
+
+        /// <summary>
+        /// Revit's answer, in our terms. Anything unrecognised maps to Unknown and is
+        /// treated exactly like Denied - an answer this code does not understand is not
+        /// evidence that a callback is coming.
+        /// </summary>
+        internal static RaiseOutcome Map(ExternalEventRequest r)
+        {
+            switch (r)
+            {
+                case ExternalEventRequest.Accepted: return RaiseOutcome.Accepted;
+                case ExternalEventRequest.Pending: return RaiseOutcome.Pending;
+                case ExternalEventRequest.Denied: return RaiseOutcome.Denied;
+                default: return RaiseOutcome.Unknown;
+            }
+        }
+
+        private IWorkRaiser Raiser() => new ExternalEventRaiser(_event);
+
+        private RaiseAttemptResult RaiseWithBoundedRetry(string context)
+        {
+            return RaiseRetryPolicy.TrySchedule(
+                Raiser(),
+                milliseconds => Thread.Sleep(milliseconds),
+                warn: message => Log.Warn(context + ": " + message));
+        }
+
+        /// <summary>
+        /// Register one command. A SECOND registration of the same name THROWS: this was
+        /// an indexer assignment, so two classes sharing a Name kept whichever was
+        /// registered last, silently, and the one that answered was not the one somebody
+        /// had tested. A duplicate is a build defect and the add-in says so at startup.
+        /// </summary>
+        public void Register(ICommand command)
+        {
+            if (command == null) throw new ArgumentNullException("command");
+            _registrationAttempts.Add(command.Name);
+            RegistryContract.Admit(_registeredNames, command.Name);
+            _commands[command.Name] = command;
+        }
+
+        /// <summary>
+        /// Compare what was registered against what the contract forwards to Revit.
+        /// The contract is the single source: nothing here keeps a second list.
+        /// </summary>
+        public RegistryContract.Report VerifyAgainstContract()
+        {
+            return RegistryContract.Compare(_registrationAttempts, Contract.PluginCommands);
+        }
+
+        internal ICommand ResolveCommand(string name)
+        {
+            ICommand command;
+            return name != null && _commands.TryGetValue(name, out command) ? command : null;
+        }
+
+        public IEnumerable<string> CommandNames => _commands.Keys;
+
+        /// <summary>Create the ExternalEvent. Call once, from OnStartup, on the UI thread.</summary>
+        public void Initialize()
+        {
+            _event = ExternalEvent.Create(this);
+        }
+
+        /// <summary>
+        /// Called from the transport (background) thread. Blocks until the command has
+        /// run on the UI thread and returns its result. A timeout means Revit is busy
+        /// or stuck in a modal — we say so rather than hang the pipe forever, and the
+        /// abandoned request is marked so the next caller learns why the thread is not
+        /// free instead of meeting an unexplained refusal.
+        /// </summary>
+        public CommandResult Invoke(string name, string paramsJson, int timeoutMs)
+            => Invoke(null, name, paramsJson, timeoutMs);
+
+        public CommandResult Invoke(string wireId, string name, string paramsJson, int timeoutMs)
+        {
+            if (_shuttingDown)
+                return CommandResult.Fail("Revit is shutting down. '" + name +
+                    "' was not queued and NEVER RAN; nothing was executed or written.");
+
+            if (name == null || !_commands.ContainsKey(name))
+            {
+                Log.Warn($"unknown command '{name}' requested");
+                return CommandResult.Fail($"Unknown command: '{name}'.");
+            }
+
+            // Submission itself touches no Revit API. Sending it through RequestGate
+            // placed it behind the long command it was meant to outlive, so a standard
+            // MCP task could wait ten minutes merely to receive its task id. Admit it on
+            // the pipe thread, durably, then raise the shared event for the queued child.
+            if (string.Equals(name, "horizun_submit_job", StringComparison.OrdinalIgnoreCase))
+                return SubmitJobWithoutWaitingForUi(name, paramsJson);
+
+            string refusal;
+            RequestGate.Request req = _gate.Begin(wireId, name, paramsJson, out refusal);
+            if (req == null)
+            {
+                Log.Warn($"'{name}' refused: {refusal}");
+                return CommandResult.Fail(refusal);
+            }
+
+            if (req.AheadAtAdmission > 0)
+                Log.Info($"'{name}' queued as ticket {req.Ticket} behind {req.AheadAtAdmission} request(s)");
+
+            // Only what happened and how long it took. Never the parameters: those
+            // carry model content, paths and values, and a log is not the place for
+            // a client's data.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            // Raise() ANSWERS, and the answer used to be thrown away. Revit can refuse
+            // to queue the event - the commonest reason being that it is shutting down,
+            // or that the ExternalEvent has been disposed - and a refused raise means no
+            // callback is ever coming. Discarding it turned that into a 600-second wait
+            // for something that had already been declined, and then a timeout message
+            // blaming a modal dialog that was never there.
+            RaiseAttemptResult raise = RaiseWithBoundedRetry("initial ExternalEvent raise for '" + name + "'");
+            if (!raise.Scheduled)
+            {
+                // Denied/unknown means this ExternalEvent will not produce a callback.
+                // Wake every ordinary and async waiter now; leaving older entries behind
+                // would turn one definitive refusal into a row of ten-minute timeouts.
+                int failed = _gate.FailQueued(
+                    "Revit refused the shared ExternalEvent before this queued request started. It NEVER RAN.");
+                AsyncPump.FailEverythingWaiting(
+                    "Revit refused the shared ExternalEvent before this queued job started. It NEVER RAN.",
+                    message => Log.Warn(message));
+                clock.Stop();
+                Log.Warn($"'{name}' NOT QUEUED: Revit kept answering Raise() with {raise.Outcome} " +
+                         $"for {raise.Attempts} attempt(s); " +
+                         $"closed {failed} ordinary waiter(s)");
+                return CommandResult.Fail(
+                    $"Revit refused to queue '{name}': Raise() returned {raise.Outcome} after " +
+                    $"{raise.Attempts} bounded attempt(s). Nothing was done, and nothing " +
+                    "will be - no callback is coming, so this is reported now instead of after the " +
+                    $"{timeoutMs} ms timeout. " +
+                    (raise.Outcome == RaiseOutcome.Denied
+                        ? "Repeated Denied usually means Revit is closing down or the bridge's external event has been " +
+                          "disposed. If Revit is still open, restart it to reload the add-in."
+                        : $"Raise() itself reported {raise.Outcome}."));
+            }
+
+            // The wait, in slices. One flat Wait(timeoutMs) used to be the whole story,
+            // and its measured failure mode was the expensive kind of honesty: a "New
+            // Project" dialog left open cost three health calls 600 s EACH - 30 minutes
+            // to learn what this class's own log line said in the first second ("it
+            // never started"). Revit only services the ExternalEvent when idle, and a
+            // modal means it never will; the caller's thread is not stuck, so between
+            // slices it asks ModalProbe. A dialog that persists across consecutive
+            // probes (ModalSighting's rule - one sighting can be a dialog Interference
+            // is already cancelling) while this request has NOT started is returned as
+            // a RESULT, now, with the dialog named - not as a timeout, ten minutes
+            // late, with a guess.
+            bool completed = false;
+            string declaredModal = null;
+            var sighting = new ModalSighting();
+            int waitedSoFarMs = 0;
+            while (waitedSoFarMs < timeoutMs)
+            {
+                int slice = Math.Min(ModalSighting.ProbeSliceMs, timeoutMs - waitedSoFarMs);
+                if (req.Wait(slice)) { completed = true; break; }
+                waitedSoFarMs += slice;
+
+                // Once the command is RUNNING the UI thread is doing the work it was
+                // asked to do; a dialog it raises is Interference's to record and this
+                // caller's only honest option is to keep waiting.
+                if (req.Started) continue;
+
+                declaredModal = sighting.Observe(ModalProbe.DescribeModal());
+                if (declaredModal != null) break;
+            }
+
+            if (!completed && declaredModal != null)
+            {
+                _gate.Abandon(req);
+                Log.Warn($"'{name}' REMOVED FROM QUEUE after {waitedSoFarMs} ms: Revit is on modal dialog " +
+                         declaredModal + " and the request never started");
+                // Re-probed once more for the structured detail: the persistence check
+                // above is deliberately string-only (ModalSighting is Revit-free and
+                // unit-tested on that arithmetic), so the richer read - title, best-effort
+                // body text, buttons, owning module - is taken now, right before the
+                // reply is built. The dialog that triggered the declaration is still up
+                // in every measured case; if it has already changed, detail.dialog_window
+                // reflects that rather than inventing continuity with 'declaredModal'.
+                JObject modalDetail = ModalProbe.DescribeModalDetail()?.ToJson();
+                return CommandResult.FailWithDetail(
+                    "Revit has a MODAL DIALOG open: " + declaredModal + ". '" + name + "' was queued but Revit " +
+                    "does not service the bridge until the dialog is answered by a human, so the request was " +
+                    "removed from the queue after " + waitedSoFarMs + " ms instead of holding this call for the " +
+                    "full " + timeoutMs + " ms timeout. It NEVER STARTED: nothing ran and nothing was written. " +
+                    "The dialog persisted across " + ModalSighting.ConsecutiveSightingsToDeclare + " probes " +
+                    "about a second apart, so it is not one the bridge auto-cancels during a command - it " +
+                    "predates this request. Answer or close it in the Revit UI (check every monitor: it can " +
+                    "open on another screen) and retry.",
+                    modalDetail == null ? null : new JObject { ["modal_dialog"] = modalDetail });
+            }
+
+            if (!completed)
+            {
+                _gate.Abandon(req);
+                // The probe again, once, for the final message: a modal seen here could
+                // not be declared above (the request had started, or it never persisted),
+                // but naming what is on screen right now beats "may be waiting".
+                ModalDialogInfo modalNowDetail = ModalProbe.DescribeModalDetail();
+                string modalNow = modalNowDetail?.ToSummaryLine();
+                Log.Warn($"'{name}' TIMED OUT after {timeoutMs} ms - Revit busy or on a modal dialog" +
+                         (req.Started ? " (it is still running; its result will be discarded)" : " (it never started)"));
+                return CommandResult.FailWithDetail(
+                    $"'{name}' timed out after {timeoutMs} ms. Revit may be busy or waiting on a modal dialog. " +
+                    (req.Started
+                        ? "The command is STILL RUNNING inside Revit - it cannot be cancelled from here, and whatever " +
+                          "it does will complete unseen. Nothing else can run until it returns."
+                        : "It was removed from the FIFO queue before Revit started it, so nothing was done.") +
+                    (modalNow != null
+                        ? " Revit is showing a modal dialog RIGHT NOW: " + modalNow + "."
+                        : ""),
+                    modalNowDetail == null ? null : new JObject { ["modal_dialog"] = modalNowDetail.ToJson() });
+            }
+
+            clock.Stop();
+            CommandResult result = req.Result ?? CommandResult.Fail($"'{name}' produced no result.");
+            long waitedMs = req.StartedUtc == default(DateTime)
+                ? clock.ElapsedMilliseconds
+                : Math.Max(0, (long)(req.StartedUtc - req.QueuedUtc).TotalMilliseconds);
+            Newtonsoft.Json.Linq.JObject data = result.Data as Newtonsoft.Json.Linq.JObject;
+            if (result.Success && data == null && result.Data != null)
+            {
+                // A number of typed commands deliberately return anonymous objects.
+                // Newtonsoft can serialize those directly, but normalizing them here
+                // makes queue telemetry consistent instead of silently omitting it.
+                Newtonsoft.Json.Linq.JToken token = Newtonsoft.Json.Linq.JToken.FromObject(result.Data);
+                data = token as Newtonsoft.Json.Linq.JObject;
+                if (data != null) result.ReplaceData(data);
+            }
+            if (result.Success && data != null && data["bridge_queue"] == null)
+            {
+                data["bridge_queue"] = new Newtonsoft.Json.Linq.JObject
+                {
+                    ["queued"] = req.AheadAtAdmission > 0,
+                    ["ahead_at_admission"] = req.AheadAtAdmission,
+                    ["waited_ms"] = waitedMs,
+                    // WHAT the wait was. waited_ms is queued-to-started, and that interval
+                    // has two different causes that used to share one number: requests
+                    // ahead in the FIFO, and Revit itself not servicing the ExternalEvent.
+                    // Measured in the field (2026-08-04): a first call after add-in load
+                    // reported waited_ms 25014 with queued=false and ahead_at_admission 0
+                    // - 25 seconds attributed to a queue it was never in. Revit only runs
+                    // external events when idle, and just after start it is not: that is
+                    // warm-up, and with a modal dialog open it is the dialog. The bridge
+                    // cannot tell those two apart from here, so the field names the
+                    // boundary it CAN see: with nothing ahead, none of the wait was queue.
+                    ["waited_on"] = req.AheadAtAdmission > 0
+                        ? "queue_then_revit_ui_thread"
+                        : "revit_ui_thread_only (nothing was ahead; a long wait here is Revit not yet idle - add-in warm-up just after start, or a modal dialog)",
+                    ["capacity"] = _gate.Capacity,
+                    ["execution_and_wait_ms"] = clock.ElapsedMilliseconds
+                };
+            }
+            if (result.Success) Log.Info($"{name} ok in {clock.ElapsedMilliseconds} ms");
+            else Log.Warn($"{name} FAILED in {clock.ElapsedMilliseconds} ms: {result.Error}");
+            // The one seat every call passes through is where timing facts are
+            // collected; health publishes the fold (ToolTimings.Snapshot).
+            ToolTimings.Record(name, clock.ElapsedMilliseconds);
+
+            // ---- The receipt (5.2). Written from what the reply itself carried, after
+            // the reply is final, and NEVER able to fail the operation it records: the
+            // answer the caller is waiting on outranks the diary. Failures are counted
+            // and surfaced by health rather than swallowed.
+            try
+            {
+                Newtonsoft.Json.Linq.JObject receipt = ReceiptLedger.Build(
+                    name, result.Success, result.Success ? null : result.Error,
+                    result.Data as Newtonsoft.Json.Linq.JObject,
+                    waitedMs, clock.ElapsedMilliseconds,
+                    req.Ticket.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    DateTime.UtcNow, ReceiptRequest(paramsJson));
+                ReceiptLedger.Append(ReceiptLedger.DefaultDirectory(), receipt,
+                                     Settings.RawValue, DateTime.UtcNow);
+            }
+            catch { /* counted inside Append; a diary must never cost an answer */ }
+
+            return result;
+        }
+
+        private static Newtonsoft.Json.Linq.JObject ReceiptRequest(string paramsJson)
+        {
+            try { return string.IsNullOrWhiteSpace(paramsJson) ? null : Newtonsoft.Json.Linq.JObject.Parse(paramsJson); }
+            catch { return null; }
+        }
+
+        private CommandResult SubmitJobWithoutWaitingForUi(string name, string paramsJson)
+        {
+            JObject request;
+            try { request = string.IsNullOrWhiteSpace(paramsJson) ? new JObject() : JObject.Parse(paramsJson); }
+            catch (Exception ex) { return CommandResult.Fail("Parameters must be a JSON object: " + ex.Message); }
+
+            CommandContract contract = Contract.Find(name);
+            string permissionReason = null;
+            if (contract == null || !Settings.IsToolAllowed(contract, out permissionReason))
+                return CommandResult.Fail((permissionReason ?? "The submit_job contract is unavailable.") + " Nothing ran.");
+
+            JToken keyToken = request["idempotency_key"];
+            string key = keyToken?.Type == JTokenType.String ? (string)keyToken : null;
+            if (string.IsNullOrWhiteSpace(key))
+                return CommandResult.Fail("idempotency_key is REQUIRED when submitting asynchronous work. " +
+                    "Generate one UUID for this deliberate submission. Nothing was queued.");
+
+            string fingerprint = RequestFingerprint.OfOperation(
+                name, "(async-child-target-is-in-arguments)", request, "idempotency_key", "confirmation_token");
+            DurableCommandDecision claim;
+            try { claim = _idempotency.Claim(key, name, fingerprint); }
+            catch (Exception ex)
+            {
+                return CommandResult.Fail("Could not establish durable idempotency before async submission: " +
+                    ex.Message + ". Nothing was queued.");
+            }
+
+            if (claim.Outcome == DurableCommandOutcome.Replay)
+            {
+                StampIdempotency(claim.ReplayResult, key, "replayed", false,
+                    "The original task id is replayed; no second job was queued.");
+                return claim.ReplayResult;
+            }
+            if (!claim.IsFresh) return CommandResult.Fail(claim.Message);
+
+            CommandResult result = null;
+            string admittedJobId = null;
+            try
+            {
+                result = _commands[name].Execute(null, paramsJson);
+                if (result != null && result.Success)
+                {
+                    admittedJobId = (string)(result.Data as JObject)?["job_id"];
+                    RaiseAttemptResult raise = RaiseWithBoundedRetry("async submission raise");
+                    if (!raise.Scheduled)
+                    {
+                        AsyncPump.FailEverythingWaiting(
+                            "Revit refused the ExternalEvent after task admission. It NEVER RAN.",
+                            m => Log.Warn(m));
+                        result = CommandResult.Fail("The task record was created, but Revit refused the callback " +
+                            "that would execute it (" + raise.Outcome + " after " + raise.Attempts +
+                            " attempt(s)). The queued job was closed as not_started.");
+                    }
+                }
+                if (result == null) result = CommandResult.Fail("horizun_submit_job produced no result.");
+                StampIdempotency(result, key, "executed_once", true,
+                    "The durable submission was recorded; an identical retry returns the same task id.");
+            }
+            catch (Exception ex)
+            {
+                result = CommandResult.Fail(ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { _idempotency.Complete(claim, result); }
+                catch (Exception ex)
+                {
+                    Log.Error("could not durably complete async submission idempotency", ex);
+                    var detail = new JObject
+                    {
+                        ["job_id"] = string.IsNullOrWhiteSpace(admittedJobId)
+                            ? JValue.CreateNull() : JToken.FromObject(admittedJobId),
+                        ["submission_record_incomplete"] = true,
+                        ["execution_may_continue"] = !string.IsNullOrWhiteSpace(admittedJobId)
+                    };
+                    result = CommandResult.FailWithDetail(
+                        "The job may have been queued, but the durable submission result could not be recorded: " +
+                        ex.Message + ". Do not submit it again; inspect the supplied job_id with job_status.", detail);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>The ExternalEvent callback — runs on Revit's UI thread.</summary>
+        public void Execute(UIApplication app)
+        {
+            CaptureDocument(app);
+            // Fairness between ordinary waiting callers and explicit run_async jobs.
+            // If both queues stay busy, turns alternate; neither can starve the other.
+            if (_preferAsync && AsyncQueue.Count > 0)
+            {
+                _preferAsync = false;
+                RunOneAsync(app);
+                return;
+            }
+
+            // Whose request is this? Taking is destructive, so a duplicate raise finds
+            // nothing and does nothing - which is what keeps a write from running twice.
+            RequestGate.Request req = _gate.Take();
+            if (req == null)
+            {
+                // No caller is waiting, so this raise is for the async queue. Same rule:
+                // Take() is destructive and there is no requeue, because the entries are
+                // mutations and re-running one is a second write, not a retry.
+                RunOneAsync(app);
+                return;
+            }
+
+            BeginActivity(req.Name);
+            DurableCommandDecision durableClaim = null;
+            try
+            {
+                ICommand cmd;
+                if (!_commands.TryGetValue(req.Name, out cmd))
+                {
+                    req.Result = CommandResult.Fail($"Unknown command: '{req.Name}'.");
+                    return;
+                }
+
+                JObject request;
+                try { request = string.IsNullOrWhiteSpace(req.ParamsJson) ? new JObject() : JObject.Parse(req.ParamsJson); }
+                catch { request = null; } // the command owns its normal invalid-JSON error
+
+                CommandContract contract = Contract.Find(req.Name);
+                string permissionReason;
+                if (contract != null && !Settings.IsToolAllowed(contract, out permissionReason))
+                {
+                    req.Result = CommandResult.Fail(permissionReason + " Nothing ran.");
+                    return;
+                }
+                if (BlocksWorksharedWrite(app, contract, request, out string worksharedRefusal))
+                {
+                    req.Result = CommandResult.Fail(worksharedRefusal + " Nothing ran.");
+                    return;
+                }
+                string sourceSha = null;
+                if (request != null && req.Name == "horizun_execute_python")
+                {
+                    var source = PythonSourceSnapshot.Resolve(request);
+                    if (source.Error != null)
+                    {
+                        req.Result = CommandResult.FailWithDetail(source.Error, new JObject
+                        {
+                            ["code"] = "source_resolution_failed", ["write_started"] = false,
+                            ["changes_applied"] = false
+                        });
+                        return;
+                    }
+                    sourceSha = source.ExecutionSha256;
+                    request = source.ExecutionRequest(request);
+                    req.ParamsJson = request.ToString(Newtonsoft.Json.Formatting.None);
+                }
+                if (request != null && RequiresIdempotency(contract, request))
+                {
+                    string key = request.Value<string>("idempotency_key");
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        req.Result = CommandResult.Fail(
+                            "idempotency_key is REQUIRED when '" + req.Name + "' will mutate or change the Revit " +
+                            "session. Generate one UUID for this deliberate operation and keep it unchanged only " +
+                            "when retrying the identical call. Nothing ran.");
+                        return;
+                    }
+
+                    string documentFingerprint = DocumentFingerprintFor(app, contract, request);
+                    string fingerprint = RequestFingerprint.OfOperation(
+                        req.Name, documentFingerprint, request, "idempotency_key", "confirmation_token");
+                    try { durableClaim = _idempotency.Claim(key, req.Name, fingerprint, sourceSha); }
+                    catch (Exception ex)
+                    {
+                        req.Result = CommandResult.Fail(
+                            "Could not establish durable idempotency before '" + req.Name + "': " + ex.Message +
+                            ". Nothing ran; Horizun refuses a mutation whose retry safety could not be recorded.");
+                        return;
+                    }
+
+                    if (durableClaim.Outcome == DurableCommandOutcome.Replay)
+                    {
+                        req.Result = durableClaim.ReplayResult;
+                        StampIdempotency(req.Result, key, "replayed", false, durableClaim.Message);
+                        return;
+                    }
+                    if (!durableClaim.IsFresh)
+                    {
+                        req.Result = CommandResult.FailWithDetail(durableClaim.Message, new JObject
+                        {
+                            ["code"] = "idempotency_" + durableClaim.Outcome.ToString().ToLowerInvariant(),
+                            ["previous_source_sha256"] = durableClaim.PreviousSourceSha256,
+                            ["submitted_source_sha256"] = sourceSha,
+                            ["hash_scope"] = "execution_bundle_v1: normalized main source, ordered include snapshots and helpers version",
+                            ["previous_execution_sha256"] = durableClaim.PreviousSourceSha256,
+                            ["submitted_execution_sha256"] = sourceSha,
+                            ["write_started"] = false, ["changes_applied"] = false
+                        });
+                        return;
+                    }
+                }
+
+                // Watch for the whole execution, for every command, without any of them
+                // having to opt in: a modal dialog stops this thread until the caller
+                // times out, and a dismissed warning that nobody reports is a lie by
+                // omission. Both are caught here and travel back with the result.
+                using (var watch = new Interference(app))
+                using (var changes = new ChangeWatch(app?.Application))
+                {
+                    try
+                    {
+                        // WHO KNOWS THE CALLER LEFT. Only the gate does, and only for the
+                        // request executing right now. A long READ can ask, between units,
+                        // whether it is still producing an answer for somebody - see
+                        // Core/CooperativeRead.cs. A loop that never asks is unaffected,
+                        // and a write is never allowed to ask at all.
+                        CooperativeRead.Abandoned = () => req.Abandoned;
+                        req.Result = cmd.Execute(app, req.ParamsJson);
+                        // What the command left changed in the model gets the spatial
+                        // coherence check (Core/SpatialAfterWrite.cs); reads cost nothing.
+                        SpatialAfterWrite.Attach(req.Name, changes, req.Result);
+                        // response_mode=summary (create_elements, clash): shaped only after
+                        // the spatial check, so the rows it names stay whole.
+                        ResponseSummaryRules.ApplyToResult(req.Name, req.ParamsJson, req.Result);
+                    }
+                    finally
+                    {
+                        // Cleared on EVERY path. A stale delegate would let the next
+                        // command read the previous request's abandonment and stop for a
+                        // caller who is still waiting.
+                        CooperativeRead.Abandoned = null;
+                        object said = watch.Report();
+                        if (said != null)
+                        {
+                            if (req.Result == null) req.Result = CommandResult.Fail($"'{req.Name}' produced no result.");
+                            req.Result.RevitSaid = said;
+                            Log.Warn($"{req.Name}: Revit raised {watch.WarningCount} warning(s), " +
+                                     $"{watch.ErrorCount} error(s), {watch.DialogCount} dialog(s)");
+                        }
+                    }
+                }
+                if (durableClaim != null && durableClaim.IsFresh)
+                    StampIdempotency(req.Result, durableClaim.Key, "executed_once", true,
+                        "The durable claim and result were recorded; an identical retry will replay this answer.");
+            }
+            catch (Exception ex)
+            {
+                // A command threw instead of returning Fail. Surface it; never let the
+                // UI-thread callback die with an unobserved exception.
+                Log.Error($"'{req.Name}' threw on the UI thread", ex);
+                req.Result = CommandResult.FailWithDetail(ex.GetType().Name + ": " + ex.Message, new JObject
+                {
+                    ["code"] = "unhandled_command_exception", ["tool"] = req.Name,
+                    ["correlation_id"] = req.WireId, ["phase"] = "handler",
+                    ["exception_type"] = ex.GetType().FullName, ["exception_message"] = ex.Message,
+                    ["inner_exception_type"] = ex.InnerException?.GetType().FullName,
+                    ["inner_exception_message"] = ex.InnerException?.Message,
+                    ["write_started"] = null, ["changes_applied"] = null, ["transaction_status"] = "unknown"
+                });
+            }
+            finally
+            {
+                if (durableClaim != null && durableClaim.IsFresh)
+                {
+                    try { _idempotency.Complete(durableClaim, req.Result); }
+                    catch (Exception ex)
+                    {
+                        // The model may already have changed. Never replace its real result with a
+                        // cheerful success when the durable completion record did not land.
+                        Log.Error("could not durably complete idempotency key for '" + req.Name + "'", ex);
+                        req.Result = CommandResult.Fail(
+                            "The command returned inside Revit, but its durable idempotency completion record could " +
+                            "not be written: " + ex.Message + ". Its outcome is now AMBIGUOUS; do not retry with a " +
+                            "new key until the model has been inspected.");
+                    }
+                }
+                CaptureDocument(app);
+                // A result nobody is waiting for is still worth a line in the log: it is
+                // the only record that the work Revit was holding the thread for is done.
+                if (req.Abandoned)
+                    Log.Warn($"'{req.Name}' finished after its caller had given up; " +
+                             $"result discarded ({(req.Result != null && req.Result.Success ? "it had succeeded" : "it had failed")}). " +
+                             "The UI thread is free again.");
+                _gate.Complete(req);
+                EndActivity(req.Name);
+                _preferAsync = AsyncQueue.Count > 0;
+                PumpNext();
+            }
+        }
+
+        /// <summary>
+        /// A machine owner can designate workshared models as audit-only. The decision
+        /// sits on the UI thread, beside the actual active document; a ribbon warning
+        /// alone would be bypassable by any MCP call. Unknown worksharing state blocks
+        /// a possible write for the same reason an unreadable lock is not an unlocked
+        /// model. Dry runs are explicitly admitted because the command's own contract
+        /// says they roll back.
+        /// </summary>
+        private static bool BlocksWorksharedWrite(UIApplication app, CommandContract contract, JObject request,
+                                                  out string refusal)
+        {
+            refusal = null;
+            if (!Settings.ForceReadOnlyOnWorkshared || contract == null ||
+                contract.Effect == ToolEffect.ReadOnly || contract.Effect == ToolEffect.HostState)
+                return false;
+
+            // A declared dry run is the only safe exemption. An omitted dry_run on a
+            // write-capable surface must not be treated as true by a generic gate: each
+            // command owns its defaults, and this policy is deliberately conservative.
+            if (contract.Effect == ToolEffect.MutatingUnlessDryRun && request?.Value<bool?>("dry_run") == true)
+                return false;
+
+            // horizun_code_check writes only with operation=travel_distance and
+            // travel.create_paths=true; a requirement-set check or a measurement is a read.
+            if (contract.Name == "horizun_code_check" &&
+                (request?["travel"] as JObject)?.Value<bool?>("create_paths") != true)
+                return false;
+
+            bool? workshared = null;
+            try { workshared = app?.ActiveUIDocument?.Document?.IsWorkshared; }
+            catch { }
+            if (workshared == false) return false;
+
+            refusal = workshared == true
+                ? "This machine is configured with force_read_only_on_workshared=true and the active document is workshared. " +
+                  "Typed writes, document-session operations and external side effects are refused; run a dry_run or disable this local policy from the Revit ribbon after approval."
+                : "This machine is configured with force_read_only_on_workshared=true but the active document's workshared state could not be read. " +
+                  "An unknown collaboration state is not permission to write; run a dry_run or resolve the document state locally.";
+            return true;
+        }
+
+        private static bool RequiresIdempotency(CommandContract contract, JObject request)
+        {
+            if (contract == null) return false;
+            switch (contract.Effect)
+            {
+                case ToolEffect.Mutating:
+                    // A Python preflight validates and compiles but executes nothing, so
+                    // like a dry run it never crosses the mutation boundary and needs no
+                    // durable key. Only an explicit preflight=true is exempt.
+                    if (contract.Name == "horizun_execute_python" &&
+                        request.Value<bool?>("preflight") == true) return false;
+                    return true;
+                case ToolEffect.MutatingUnlessDryRun:
+                    // All current plan/apply commands default to dry_run=true. Only an
+                    // explicit false crosses the mutation boundary.
+                    return request["dry_run"] != null && request.Value<bool?>("dry_run") == false;
+                case ToolEffect.DocumentSession:
+                    string operation = (request.Value<string>("operation") ?? "").ToLowerInvariant();
+                    if (operation == "inspect" || string.IsNullOrEmpty(operation)) return false;
+                    if (request.Value<bool?>("dry_run") == true) return false;
+                    // sync_with_central previews when dry_run is omitted; only false syncs.
+                    if (operation == "sync_with_central" && request["dry_run"] == null) return false;
+                    // new_project rehearses when dry_run is omitted, the same way.
+                    if (operation == "new_project" && request["dry_run"] == null) return false;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string DocumentFingerprintFor(UIApplication app, CommandContract contract, JObject request)
+        {
+            // Session operations change which document is active or can close it. Their
+            // target is already in the canonical arguments; binding the fingerprint to
+            // the pre-call active document would make a successful open/close change its
+            // own retry identity and defeat replay after a lost response.
+            if (contract != null &&
+                (contract.Name == "horizun_open_document" || contract.Effect == ToolEffect.DocumentSession))
+                return "(document-session-target-is-in-arguments)";
+
+            try
+            {
+                var doc = app?.ActiveUIDocument?.Document;
+                string year = app?.Application?.VersionNumber;
+                return DocumentGate.IdentityOf(doc, year)?.Fingerprint() ?? "(no-active-document)";
+            }
+            catch { return "(active-document-unreadable)"; }
+        }
+
+        private static void StampIdempotency(CommandResult result, string key, string status, bool executed,
+                                             string note)
+        {
+            if (result == null || !result.Success) return;
+            JObject data = result.Data as JObject;
+            if (data == null && result.Data != null)
+            {
+                data = JToken.FromObject(result.Data) as JObject;
+                if (data != null) result.ReplaceData(data);
+            }
+            if (data == null) return;
+            data["idempotency"] = new JObject
+            {
+                ["key"] = key,
+                ["status"] = status,
+                ["command_executed_in_this_call"] = executed,
+                ["note"] = note
+            };
+        }
+
+        /// <summary>
+        /// One queued script, on the UI thread, with nobody waiting for the answer.
+        ///
+        /// Everything this produces goes into the job record, because that is the only
+        /// place an async caller can read it. Every exit path finishes the record: a job
+        /// with no finish line is indistinguishable from one whose process died, and
+        /// horizun_job_status refuses to guess between the two.
+        /// </summary>
+        private void RunOneAsync(UIApplication app)
+        {
+            AsyncWork work = AsyncQueue.Take();
+            if (work == null) return;
+
+            // A SEQUENCE IS ITS OWN RUN. It writes its own steps and finishes its own
+            // record, so the single-call path below is left exactly as it was rather
+            // than growing a second meaning for every line in it.
+            if (work.Sequence != null && work.Sequence.Count > 0) { RunSequence(app, work); return; }
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            CommandResult result = null;
+            bool began = false;
+            try
+            {
+                ICommand cmd;
+                if (!_commands.TryGetValue(work.Command, out cmd))
+                    result = CommandResult.Fail("Unknown command: '" + work.Command + "'.");
+                else
+                {
+                    CommandContract contract = Contract.Find(work.Command);
+                    string permissionReason;
+                    if (contract != null && !Settings.IsToolAllowed(contract, out permissionReason))
+                        result = CommandResult.Fail(permissionReason + " The queued job did not run.");
+                    else using (var watch = new Interference(app))
+                    {
+                        // The command writes into the record the CALLER was handed. Without
+                        // this it opens its own, and the caller polls an id whose
+                        // checkpoint_count never leaves zero while the progress accumulates
+                        // in a second file it was never told about. Measured on a 150 s job.
+                        // The record moves from queued to running HERE, and not before.
+                        // Until this line the entry was waiting for a turn on the UI
+                        // thread, and job_status must be able to say which of the two it
+                        // is - "no finish line" used to cover queued, running and died.
+                        if (work.DocumentFingerprint != null)
+                        {
+                            if (work.DocumentFingerprint.Length == 0)
+                            {
+                                if (app.ActiveUIDocument?.Document != null)
+                                    throw new InvalidOperationException("A document opened after this job was admitted. Nothing was executed.");
+                            }
+                            else
+                            {
+                                CommandResult moved = DocumentGate.StillTheSame(app, work.DocumentFingerprint, work.Command);
+                                if (moved != null) throw new InvalidOperationException(moved.Error);
+                            }
+                        }
+                        AsyncResumeGuard.Begin(work.Record);
+                        began = true;
+                        Job.Ambient = work.Record;
+                        using (var changes = new ChangeWatch(app?.Application))
+                        {
+                            try { result = cmd.Execute(app, work.ParamsJson); SpatialAfterWrite.Attach(work.Command, changes, result); ResponseSummaryRules.ApplyToResult(work.Command, work.ParamsJson, result); }
+                        finally
+                        {
+                            Job.Ambient = null;
+                            CaptureDocument(app);
+                            object said = watch.Report();
+                            if (said != null)
+                            {
+                                if (result == null) result = CommandResult.Fail("'" + work.Command + "' produced no result.");
+                                result.RevitSaid = said;
+                            }
+                        }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("async '" + work.Command + "' threw on the UI thread", ex);
+                result = CommandResult.Fail(ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    if (result == null) result = CommandResult.Fail("'" + work.Command + "' produced no result.");
+                    string payloadJson = null;
+                    if (result.Success)
+                    {
+                        try { payloadJson = AsyncResultPayload.Serialize(result.Data, work.JobId); }
+                        catch (Exception imageEx)
+                        {
+                            object revitSaid = result.RevitSaid;
+                            result = CommandResult.FailWithDetail(
+                                "The command completed, but its file-backed async result could not be made durable: " +
+                                imageEx.Message + ". The job is failed rather than returning a path that may disappear.",
+                                new JObject
+                                {
+                                    ["job_id"] = work.JobId,
+                                    ["stage"] = "persist_async_result",
+                                    ["underlying_command_completed"] = true,
+                                    ["result_available"] = false
+                                });
+                            result.RevitSaid = revitSaid;
+                        }
+                    }
+                    // revit_said, built EXACTLY as PipeEnvelope builds it for the sync
+                    // path, so run_async and a synchronous call report the same shape. It
+                    // travels on failure too: what Revit raised is usually the REASON, and
+                    // the async caller has no other channel to learn it - the four
+                    // undiagnosed models on 2026-08-07 lost precisely this.
+                    string revitSaidJson = null;
+                    if (result.RevitSaid != null)
+                    {
+                        try { revitSaidJson = Newtonsoft.Json.Linq.JToken.FromObject(result.RevitSaid).ToString(Newtonsoft.Json.Formatting.None); }
+                        catch (Exception rex) { Log.Warn("could not serialize revit_said for async job: " + rex.Message); }
+                    }
+                    string fallbackJson = result.Fallback == null ? null :
+                        result.Fallback.ToJson().ToString(Newtonsoft.Json.Formatting.None);
+                    string gapsJson = result.CapabilityGaps == null ? null :
+                        result.CapabilityGaps.ToString(Newtonsoft.Json.Formatting.None);
+                    string detailJson = result.Detail == null ? null :
+                        result.Detail.ToString(Newtonsoft.Json.Formatting.None);
+                    if (began)
+                    {
+                        work.Record.Result(result.Success ? payloadJson : null,
+                                           revitSaidJson, fallbackJson, gapsJson, detailJson);
+                        work.Record.Finish(result.Success ? "ok" : "failed", result.Success ? null : result.Error);
+                    }
+                    else work.Record.Finish("not_started", result?.Error ?? "The command never started.");
+                }
+                catch (Exception ex) { Log.Error("could not close the async job record", ex); }
+
+                Log.Warn("async " + work.Command + " (" + work.JobId + ") " +
+                         (result != null && result.Success ? "ok" : "FAILED") + " in " + clock.ElapsedMilliseconds + " ms");
+
+                _preferAsync = false;
+                PumpNext();
+            }
+        }
+
+        /// <summary>
+        /// ONE JOB WHOSE WORK IS AN ORDERED SEQUENCE - a read-only sweep over several
+        /// models, on the queue that already exists.
+        ///
+        /// Three rules carry it, and each one is a way a sweep lies:
+        ///
+        ///   THE START IS RECORDED BEFORE THE STEP RUNS. A cloud open takes minutes,
+        ///   and a step whose start is written only on completion is indistinguishable
+        ///   from a stuck job for the whole time it is working.
+        ///
+        ///   EXECUTION STOPS AT THE FIRST FAILURE, and every later step is reported
+        ///   not_run - never omitted, never succeeded. A sequence that stops at step
+        ///   three and returns two steps reads as a two-step sequence that worked.
+        ///
+        ///   WHAT THE SEQUENCE OPENED IS CLOSED ON THE FAILURE PATH. This is exactly
+        ///   where an implementation is tempted to swallow the exception and move on,
+        ///   and the cost of doing so is a document left open in somebody's Revit.
+        /// </summary>
+        private void RunSequence(UIApplication app, AsyncWork work)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            List<SequenceEntry> steps = work.Sequence;
+            // TWO FACTS, NOT ONE INDEX. `stoppedAt = -1` used to mean both "nothing
+            // stopped" and "stopped before the first step ran", and on the second
+            // reading the cleanup closes below were skipped - the one invariant that
+            // must not depend on WHERE the sweep stopped, because its cost is a
+            // document left open in somebody's Revit.
+            int stoppedAt = -1;
+            bool stopped = false;
+            string failure = null;
+
+            try { work.Record.MarkRunning(); } catch { }
+            Job.Ambient = work.Record;
+            try
+            {
+                for (int i = 0; i < steps.Count; i++)
+                {
+                    SequenceEntry step = steps[i];
+                    if (_shuttingDown)
+                    {
+                        failure = "Revit began closing before this step ran.";
+                        stoppedAt = i - 1;
+                        stopped = true;
+                        break;
+                    }
+
+                    step.Status = StepStatus.Running;
+                    step.StartedUtc = DateTime.UtcNow.ToString("o");
+                    // BEFORE the step, not after: see the header.
+                    try { work.Record.Step(step.Key, step.Tool, StepStatus.Running, null, null); } catch { }
+
+                    CommandResult r = RunOneSequenceStep(app, step);
+                    step.FinishedUtc = DateTime.UtcNow.ToString("o");
+
+                    if (r != null && r.Success)
+                    {
+                        step.Status = StepStatus.Succeeded;
+                        try { step.ResultRef = AsyncResultPayload.Serialize(r.Data, work.JobId); }
+                        catch (Exception ex)
+                        {
+                            step.ResultRef = null;
+                            step.Error = "the step succeeded and its result could not be stored: " + ex.Message;
+                        }
+                    }
+                    else
+                    {
+                        step.Status = StepStatus.Failed;
+                        step.Error = r == null ? "the step produced no result." : r.Error;
+                        failure = "step " + step.Key + " (" + step.Tool + ") failed: " + step.Error;
+                        stoppedAt = i;
+                        stopped = true;
+                    }
+                    try { work.Record.Step(step.Key, step.Tool, step.Status, step.ResultRef, step.Error); } catch { }
+
+                    if (step.Status == StepStatus.Failed) break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("async sequence threw on the UI thread", ex);
+                failure = ex.GetType().Name + ": " + ex.Message;
+                stopped = true;
+                if (stoppedAt < 0) stoppedAt = steps.FindIndex(s => s.Status == StepStatus.Running);
+            }
+            finally
+            {
+                Job.Ambient = null;
+            }
+
+            // WHAT THE SEQUENCE OPENED, THE SEQUENCE CLOSES. The remaining close steps
+            // run even though the sweep has stopped: they are the only reason a failed
+            // model does not leave a document sitting in somebody's Revit. Their own
+            // outcome is recorded honestly - a close that was attempted and failed is
+            // not the same as one that never ran.
+            if (stopped) RunPendingCloses(app, work, steps, stoppedAt);
+
+            // A sweep that ran to the end settles nothing: every step already has its
+            // own outcome. One that stopped settles everything after the stop, and a
+            // stop BEFORE the first step settles all of them.
+            if (stopped) JobSequenceRules.SettleAfterStop(steps, stoppedAt);
+            foreach (SequenceEntry s in steps)
+                if (s.Status == StepStatus.NotRun)
+                    try { work.Record.Step(s.Key, s.Tool, s.Status, null, s.Error); } catch { }
+
+            string terminal = JobSequenceRules.TerminalStatus(steps);
+            var payload = new JObject
+            {
+                ["mode"] = "sequence",
+                ["job_id"] = work.JobId,
+                ["steps"] = JobSequenceRules.StepsJson(steps),
+                ["steps_submitted"] = steps.Count,
+                ["steps_succeeded"] = steps.Count(s => s.Status == StepStatus.Succeeded),
+                ["steps_not_run"] = steps.Count(s => s.Status == StepStatus.NotRun),
+                ["read_only"] = true,
+                ["read_only_means"] = JobSequenceRules.ReadOnlyMeans,
+                ["not_run_means"] = JobSequenceRules.NotRunMeans
+            };
+            try
+            {
+                work.Record.Result(payload.ToString(Newtonsoft.Json.Formatting.None));
+                work.Record.Finish(terminal, failure);
+            }
+            catch (Exception ex) { Log.Error("could not close the async sequence record", ex); }
+
+            Log.Warn("async sequence (" + work.JobId + ") " + terminal + " in " + clock.ElapsedMilliseconds + " ms");
+            _preferAsync = false;
+            PumpNext();
+        }
+
+        /// <summary>
+        /// The close steps of a stopped sweep. ONLY closes: nothing else is retried,
+        /// because the sweep has already failed and running more reads over a Revit in
+        /// an unknown state is how one bad model becomes twelve bad results.
+        ///
+        /// AND ONLY THE CLOSES WHOSE OWN MODEL WAS OPENED. The test is the NEAREST
+        /// PRECEDING open, not any open anywhere in the sequence: in a twelve-model
+        /// sweep that stopped at model three, "some open succeeded" is true because
+        /// model one's did, and the cleanup would then aim closes at nine documents
+        /// this sweep never opened. A close that finds one of them open - because the
+        /// USER has it open - closes the user's document. That is the failure this
+        /// predicate exists to prevent; reporting "a document may be left open" about
+        /// a document that never existed is only the second-worst outcome.
+        /// </summary>
+        private void RunPendingCloses(UIApplication app, AsyncWork work, List<SequenceEntry> steps, int stoppedAt)
+        {
+            Job.Ambient = work.Record;
+            try
+            {
+                for (int i = stoppedAt + 1; i < steps.Count; i++)
+                {
+                    SequenceEntry step = steps[i];
+                    if (step.Tool != "horizun_document_session") continue;
+
+                    // THE NEAREST PRECEDING OPEN, not any open anywhere. "Some
+                    // open succeeded" is true in a twelve-model sweep that
+                    // stopped at model three, because model one's did - and the
+                    // cleanup would then run the closes for models four through
+                    // twelve, each aimed at a document this sweep never opened.
+                    // If the user has one of those open, the sweep closes the
+                    // user's document. Only the open belonging to THIS close can
+                    // justify attempting it.
+                    bool ownOpenSucceeded = false;
+                    for (int j = i - 1; j >= 0; j--)
+                    {
+                        if (steps[j].Tool != "horizun_open_document") continue;
+                        ownOpenSucceeded = steps[j].Status == StepStatus.Succeeded;
+                        break;
+                    }
+                    if (!ownOpenSucceeded) continue;
+                    step.Status = StepStatus.Running;
+                    step.StartedUtc = DateTime.UtcNow.ToString("o");
+                    try { work.Record.Step(step.Key, step.Tool, StepStatus.Running, null, null); } catch { }
+
+                    CommandResult r = RunOneSequenceStep(app, step);
+                    step.FinishedUtc = DateTime.UtcNow.ToString("o");
+                    step.Status = r != null && r.Success ? StepStatus.Succeeded : StepStatus.Failed;
+                    // A close that worked has NO error. Explaining itself in the error
+                    // field would make a reader scanning for failures find one.
+                    step.Error = step.Status == StepStatus.Failed
+                        ? "the sweep had already stopped and this close was attempted anyway: " +
+                          (r == null ? "no result." : r.Error) + " A document may be left open."
+                        : null;
+                    try { work.Record.Step(step.Key, step.Tool, step.Status, null, step.Error); } catch { }
+                }
+            }
+            catch (Exception ex) { Log.Error("a cleanup close threw on the UI thread", ex); }
+            finally { Job.Ambient = null; }
+        }
+
+        private CommandResult RunOneSequenceStep(UIApplication app, SequenceEntry step)
+        {
+            ICommand cmd;
+            if (!_commands.TryGetValue(step.Tool, out cmd))
+                return CommandResult.Fail("Unknown command: " + step.Tool + ".");
+
+            CommandContract contract = Contract.Find(step.Tool);
+            string permissionReason;
+            // Permissions are checked AGAIN here, not only at admission: a sequence can
+            // sit in the queue while the machine owner revokes something.
+            if (contract != null && !Settings.IsToolAllowed(contract, out permissionReason))
+                return CommandResult.Fail(permissionReason + " This sequence step did not run.");
+
+            using (var watch = new Interference(app))
+            {
+                CommandResult r = null;
+                try { r = cmd.Execute(app, step.Arguments.ToString(Newtonsoft.Json.Formatting.None)); }
+                catch (Exception ex) { r = CommandResult.Fail(ex.GetType().Name + ": " + ex.Message); }
+                finally
+                {
+                    object said = watch.Report();
+                    if (said != null)
+                    {
+                        if (r == null) r = CommandResult.Fail(step.Tool + " produced no result.");
+                        r.RevitSaid = said;
+                    }
+                }
+                return r;
+            }
+        }
+
+        /// <summary>
+        /// Schedule one more callback when either queue has work. This method is called
+        /// while Revit is still unwinding the current ExternalEvent callback, precisely
+        /// the window in which Revit 2026 was measured returning a transient Denied.
+        /// Raising is therefore deferred to a background worker; that worker exhausts
+        /// the bounded retry policy before a refusal is allowed to drain the queues.
+        /// </summary>
+        private void PumpNext()
+        {
+            if (!_gate.HasPending && AsyncQueue.Count == 0) return;
+            if (Interlocked.Exchange(ref _backgroundRaiseScheduled, 1) != 0) return;
+
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                // Let the callback that called PumpNext return before the first raise.
+                Thread.Sleep(5);
+                Interlocked.Exchange(ref _backgroundRaiseScheduled, 0);
+                if (_shuttingDown || (!_gate.HasPending && AsyncQueue.Count == 0)) return;
+
+                RaiseAttemptResult raise = RaiseWithBoundedRetry("queued-work ExternalEvent raise");
+                if (raise.Scheduled || _shuttingDown) return;
+
+                string reason = "Revit refused to schedule queued work: Raise() returned " + raise.Outcome +
+                                " after " + raise.Attempts + " bounded attempt(s). It NEVER STARTED; nothing " +
+                                "was executed or written. Revit is closing or the ExternalEvent is no longer available.";
+                int sync = _gate.FailQueued(reason);
+                int async = AsyncPump.FailEverythingWaiting(reason, Log.Warn);
+                Log.Warn("queued work abandoned after Raise()=" + raise.Outcome + ": " + sync +
+                         " synchronous request(s), " + async + " async job(s)");
+            });
+        }
+
+        public bool CancelQueued(string wireId, out string detail)
+            => _gate.CancelQueued(wireId, out detail);
+
+        public JObject ObserveRequest(string wireId) => _gate.Observe(wireId);
+
+        public int Shutdown()
+        {
+            _shuttingDown = true;
+            string reason = "Revit shut down before this queued command started. It NEVER RAN: nothing was " +
+                            "executed and nothing was written.";
+            return _gate.FailQueued(reason);
+        }
+
+        public string GetName() => "Horizun.Dispatcher";
+    }
+}

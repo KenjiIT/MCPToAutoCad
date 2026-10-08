@@ -1,0 +1,139 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Horizun MCP server. A stdio JSON-RPC process that speaks MCP to the client
+    and forwards each tool call to the Revit add-in over its named pipe. Original
+    Horizun code; the only dependency is Newtonsoft.Json (MIT). The MCP wire
+    format is hand-rolled from the open MCP stdio spec, not a third-party SDK.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>horizun-mcp</AssemblyName>
+    <RootNamespace>Horizun.Server</RootNamespace>
+    <!-- Version is inherited from the repository's Directory.Build.props. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- One lock graph serves the ordinary framework-dependent test build and
+         both installation modes, which publish a self-contained win-x64
+         executable. Declaring the shipped RID here keeps ordinary locked
+         restore and locked publishing consistent instead of making each route
+         invalidate the other's lock. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!-- The release redistributes this runtime, so its patch is part of our
+         supply-chain identity rather than whatever happens to be newest on the
+         packaging runner. pack.ps1 and sbom.ps1 re-read the published deps file
+         and fail if the bytes are not this exact component.
+
+         SELF-CONTAINED ONLY, and that condition is load-bearing. Unconditional,
+         this pin also became the runtimeconfig of the ordinary framework-
+         dependent build - the one the test suite launches - which then refused
+         to start on any machine whose newest .NET 8 patch was below it
+         (measured 2026-08-24: the host had 8.0.23/8.0.28, the apphost demanded
+         exactly 8.0.30, and 14 wire tests reported the codes untested). A
+         framework-dependent binary has no redistributed runtime to pin: the
+         supply-chain identity this protects exists only where the runtime
+         ships WITH the artifact, and both install.ps1 and pack.ps1 publish
+         with SelfContained=true, where pack.ps1/sbom.ps1 still verify the
+         published deps against this exact value. The runtime pack is not part
+         of the NuGet lock graph, so the condition does not fork the lock. -->
+    <RuntimeFrameworkVersion Condition="'$(SelfContained)' == 'true'">8.0.30</RuntimeFrameworkVersion>
+
+    <!-- Same reason as the plugin: without this the binary carries the absolute
+         path of the folder it was built in, so the same commit built elsewhere
+         produced a different hash and every shipped copy leaked the builder's
+         filesystem layout. Measured, not assumed - see Horizun.Revit.csproj. -->
+    <Deterministic>true</Deterministic>
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SourceRoot Include="$(MSBuildThisFileDirectory)..\..\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One settings reader, shared with the add-in. Linked rather than duplicated so
+         the server cannot drift into advertising a capability the plugin refuses. It
+         carries no using Autodesk.*, so nothing Revit comes with it. -->
+    <Compile Include="..\Horizun.Revit\Core\Settings.cs" />
+    <!-- The pack map and its resolution, linked for the same reason Settings is:
+         the server decides what tools/list advertises with the same arithmetic the
+         add-in refuses dispatch with, or the two drift. -->
+    <Compile Include="..\Horizun.Revit\Core\ToolPacks.cs" />
+    <!-- One answer to "where does Horizun keep its state". Settings, discovery, jobs
+         and both logs used to compute it separately at each end - seven lines that
+         happened to agree, in two processes that can be handed different values of
+         %LOCALAPPDATA%. Linked for the same reason Settings.cs is: the server and the
+         add-in must not be able to disagree about it. -->
+    <Compile Include="..\Horizun.Revit\Core\HorizunPaths.cs" />
+    <Compile Include="..\Horizun.Revit\Core\DiscoverySweep.cs" />
+    <!-- Host-side external mutations use the same append-only, fail-closed
+         idempotency ledger as Revit mutations. -->
+    <Compile Include="..\Horizun.Revit\Core\CommandResult.cs" />
+    <!-- CommandResult carries the machine-readable permission to fall back to Python,
+         so its type travels with it. Revit-free, like everything else linked here. -->
+    <Compile Include="..\Horizun.Revit\Core\FallbackSignal.cs" />
+    <Compile Include="..\Horizun.Revit\Core\Idempotency.cs" />
+    <Compile Include="..\Horizun.Revit\Core\DurableCommandIdempotency.cs" />
+    <Compile Include="..\Horizun.Revit\Core\DurableStoreRetention.cs" />
+    <!-- The budget comparison answers in the server: the join is arithmetic over a
+         takeoff reply and a workbook. Self-contained on purpose - the catalogue
+         status strings it emits are pinned to CodeStatus by a Core test rather than
+         by linking the readiness chain that CodeStatus lives beside. -->
+    <Compile Include="..\Horizun.Revit\Core\BudgetComparisonRules.cs" />
+    <Compile Include="..\Horizun.Revit\Core\Bc3Rules.cs" />
+    <!-- ISO 19650 information containers: naming, validation and the verified sidecar.
+         Revit-free and net48-safe, because horizun_export compiles the same file into the
+         add-in to name and stamp what it produces. -->
+    <Compile Include="..\Horizun.Revit\Core\InformationContainer.cs" />
+    <!-- The repair memory. Revit-free by design: the normalisation, the matching and
+         the quarantine rules are arithmetic over strings, and the tool that works them
+         answers in this process because the moment somebody most wants to ask "has this
+         failure been seen before?" is the moment Revit is busy or gone. -->
+    <Compile Include="..\Horizun.Revit\Core\RepairMemory.cs" />
+    <!-- The promotion registry. Revit-free for the same reason: states, transitions and
+         an atomic pointer are arithmetic over files, and the tool that works them must
+         answer whether or not a Revit is running. -->
+    <!-- ScriptPromotion calls into both of these and the project carried only
+         one of the two files, so the whole server failed to compile - which
+         reads, from outside, exactly like a server with nothing wrong. -->
+    <Compile Include="..\Horizun.Revit\Core\ScriptInvocation.cs" />
+    <Compile Include="..\Horizun.Revit\Core\ScriptPromotion.cs" />
+    <!-- The IDS reader horizun_validate_ids and horizun_deliver_ifc use. Linked so that
+         ids_from_loin proves the file it generates with the SAME reader that will later
+         read it, not with a second parser that could disagree. Revit-free. -->
+    <Compile Include="..\Horizun.Revit\Core\IdsDocument.cs" />
+    <Compile Include="..\Horizun.Revit\Core\IdsRestriction.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The ISO 19650 project-context schema (schemas/project-context.v1.schema.json),
+         embedded so an installed server validates against exactly the schema it was
+         built with, with no source checkout on the machine. -->
+    <EmbeddedResource Include="..\..\schemas\project-context.v1.schema.json" LogicalName="Horizun.Schemas.project-context.v1.schema.json" />
+    <!-- LOIN -> IDS. buildingSMART's ids.xsd 1.0, verbatim (CC BY-ND 4.0, see
+         THIRD-PARTY-NOTICES.md); the part of the XML Schema vocabulary it imports, so
+         validation never needs the network; and the IFC entity names per schema that
+         validate checks a LOIN's applies_to against. -->
+    <EmbeddedResource Include="..\..\schemas\ids\ids-1.0.xsd" LogicalName="Horizun.Schemas.ids-1.0.xsd" />
+    <EmbeddedResource Include="..\..\schemas\ids\xmlschema-subset.xsd" LogicalName="Horizun.Schemas.xmlschema-subset.xsd" />
+    <EmbeddedResource Include="..\..\schemas\ids\ifc-entities.txt" LogicalName="Horizun.Schemas.ifc-entities.txt" />
+    <!-- The impact-preview MCP App: page, adapter and view, composed into one page at
+         read time. Three files so the adapter can be run under node by the tests. -->
+    <EmbeddedResource Include="Apps\impact-preview.html" LogicalName="Horizun.Apps.impact-preview.html" />
+    <EmbeddedResource Include="Apps\impact-preview-adapter.js" LogicalName="Horizun.Apps.impact-preview-adapter.js" />
+    <EmbeddedResource Include="Apps\impact-preview-view.js" LogicalName="Horizun.Apps.impact-preview-view.js" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The single declaration of every command, shared with the other half. -->
+    <Compile Include="..\Horizun.Contracts\Contract.cs" />
+  </ItemGroup>
+</Project>

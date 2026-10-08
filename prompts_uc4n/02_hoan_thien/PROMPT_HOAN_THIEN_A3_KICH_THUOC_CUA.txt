@@ -1,0 +1,10 @@
+Chỉ lập phương án cho yêu cầu trong file này, tối đa 10 lời gọi, dùng tool runtime đúng schema. Tiếp tục bản vẽ phòng hiện tại, không tạo mới. Cần đã hoàn thành A0 và xác nhận phòng nằm trong Model; nếu chưa có kết quả đó, nêu điều kiện thiếu, không lập lại các lệnh đọc mãi. Nếu thông tin đủ, phương án phải có tool tạo tương ứng; không trả phương án chỉ đọc rồi coi như đã thêm chữ/kích thước. Không tạo trùng mục đã hoàn thành. Không tự thực thi nếu client chỉ lập phương án.
+
+A3 — CHỈ TẠO KÍCH THƯỚC TƯỜNG VÀ CỬA
+Dùng dimension_linear, layer="A-DIMEN-T-N" đã chuẩn bị ở A2:
+1. Tường: x1=1000,y1=-200,x2=1000,y2=0,dim_x=700,dim_y=-100,rotation=90. Kỳ vọng 200 mm.
+2. Cửa đi: x1=2050,y1=0,x2=2950,y2=0,dim_x=2500,dim_y=-400,rotation=0. Kỳ vọng 900 mm.
+3. Cửa sổ: x1=1900,y1=4000,x2=3100,y2=4000,dim_x=2500,dim_y=4500,rotation=0. Kỳ vọng 1200 mm.
+Không ghi đè text giá trị đo. Không tạo nhãn hoặc xuất file.
+Cần cấp dimension_linear. Nếu thiếu layer/kết quả A2, báo điều kiện đó; không tự giả định.
+

@@ -1,0 +1,53 @@
+# ⚙️  GENERATED FROM policy.yaml — đừng sửa tay; sửa policy.yaml rồi chạy gen-converters.py
+name: harness
+on: [pull_request, push]
+env:
+  HARNESS_REPO: https://github.com/Rheinmir/setup.git
+  HARNESS_REF: orca            # pin phiên bản harness: nhánh / tag / commit SHA
+  OVERSTACK_DIR: .llmwiki
+  HARNESS_DIR: .harness
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.x' }
+      - run: pip install pyyaml
+      - name: self-install harness global trên runner (v4 — repo không mang engine)
+        run: |
+          git clone --depth 1 -b "$HARNESS_REF" "$HARNESS_REPO" "$RUNNER_TEMP/harness-src"
+          bash "$RUNNER_TEMP/harness-src/harness/scripts/install-harness.sh" --global
+      - name: harness-doctor fire-drill — chứng ref đang pin còn cắn (không dark rail)
+        # chạy từ CHECKOUT ĐẦY ĐỦ vừa clone, KHÔNG từ global: global thiếu hooks/pre-commit
+        # của repo nên side-effect rail (R4/R8/R10/R17) báo missing = dark-rail GIẢ. Bản
+        # $RUNNER_TEMP/harness-src là full repo → 18/18 thật. Mỗi PR tự chứng 18 luật gốc
+        # mà downstream đang bị gác vẫn còn cắn — dark rail của framework nổi đỏ TẠI downstream.
+        run: python3 "$RUNNER_TEMP/harness-src/harness/scripts/harness-doctor.py" --ci
+      - name: harness-local fire-drill — rule RIÊNG dự án còn cắn? (engine mới + rules repo)
+        # phủ nốt lỗ harness-doctor không chạm: rule tuỳ biến của downstream. Chạy ENGINE
+        # luôn-mới từ harness-src (run.py của repo có thể là bản cũ chưa có firedrill — nếu
+        # gọi nó, mode lạ rơi về check và CI degrade ÂM THẦM), trỏ HARNESS_LOCAL_DIR vào
+        # rules của repo. Vắng harness-local thì skip (đa số dự án). Rule có validator mà
+        # thiếu fixtures bad/good thì đỏ (blind-spot). Bad không chặn thì rule chết, đỏ.
+        run: |
+          [ -d harness-local ] || { echo "no harness-local — skip"; exit 0; }
+          HARNESS_LOCAL_DIR="$PWD/harness-local" python3 "$RUNNER_TEMP/harness-src/harness-local/run.py" firedrill
+      - name: harness validator (layer=repo, từ global) trên file .md đổi
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          files=$(git diff --name-only "$base" HEAD 2>/dev/null | grep -E '\.md$' || true)
+          [ -z "$files" ] && { echo "no changed .md"; exit 0; }
+          python3 "$HOME/.claude/harness/.harness/poc-vendor-neutral/bin/llmwiki-validate.py" files $files
+      - name: wikieval — gate hồi quy eval (skip nếu dự án chưa khoá baseline)
+        # Engine từ GLOBAL (repo downstream không mang engine), nhưng golden/baseline/config
+        # PHẢI trỏ vào repo đang check: wikieval tính REPO_ROOT từ __file__, nên gọi bản
+        # global mà không truyền 3 đường dẫn này sẽ đo nhầm chính ~/.claude/harness.
+        run: |
+          [ -f "$HARNESS_DIR/metrics/eval-baseline.json" ] || { echo "no eval baseline — skip"; exit 0; }
+          E=$(ls -d "$OVERSTACK_DIR/wiki/sources/evals" fdk/wiki/sources/evals 2>/dev/null | head -1)
+          [ -n "$E" ] || { echo "no goldens dir — skip"; exit 0; }
+          [ -f "$HARNESS_DIR/scripts/wikieval-collect.py" ]             && python3 "$HARNESS_DIR/scripts/wikieval-collect.py" > "$HARNESS_DIR/evals/wikieval-outputs.json"
+          [ -f "$HARNESS_DIR/evals/wikieval-outputs.json" ] || { echo "no candidate outputs — skip"; exit 0; }
+          python3 "$HOME/.claude/harness/harness/scripts/wikieval.py"             --evals-dir "$E" --baseline "$HARNESS_DIR/metrics/eval-baseline.json"             --config "$HARNESS_DIR/wikieval.config.yaml"             --outputs "$HARNESS_DIR/evals/wikieval-outputs.json" --check

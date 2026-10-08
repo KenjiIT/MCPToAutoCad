@@ -1,0 +1,7 @@
+-e ./mcp_server/upstream[com,pdf]
+fastmcp==3.4.8
+fastapi==0.142.2
+uvicorn==0.54.0
+jsonschema==4.26.0
+pymupdf==1.28.2
+openpyxl==3.1.5

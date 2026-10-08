@@ -1,0 +1,44 @@
+VẼ GIÚP TÔI MẶT BẰNG PHÒNG NGỦ ĐẦY ĐỦ
+
+Hãy vẽ một bản mặt bằng 2D rõ ràng cho phòng ngủ có tên “PHÒNG NGỦ 01”. Tôi muốn một bản vẽ có tường, cửa đi, cửa sổ, đồ nội thất, tên phòng và kích thước đầy đủ; sau khi vẽ hãy kiểm tra lại bản vẽ và lưu thành file để tôi mở xem.
+
+KÍCH THƯỚC VÀ HƯỚNG
+- Dùng millimet làm đơn vị.
+- Kích thước lọt lòng của phòng là 6.000 mm theo chiều Đông–Tây và 4.000 mm theo chiều Nam–Bắc, diện tích dự kiến 24 m².
+- Tường bao dày 200 mm; đặt toàn bộ phần tường về phía ngoài phòng để kích thước bên trong vẫn đúng 6.000 × 4.000 mm.
+- Phòng hình chữ nhật, không có vách ngăn.
+- Để xác định vị trí, lấy góc trong phía Tây Nam làm điểm (0,0): trục X hướng sang Đông, trục Y hướng lên Bắc. Các tọa độ dưới đây đều tính bằng millimet từ điểm đó.
+
+CỬA ĐI VÀ CỬA SỔ
+- Cửa đi rộng 900 mm, nằm giữa tường phía Nam, từ x=2.550 đến x=3.450 mm. Cửa mở vào trong phòng một góc 90°. Khi đứng ngoài nhìn vào, bản lề ở bên trái.
+- Cửa sổ rộng 1.500 mm, nằm giữa tường phía Bắc, từ x=2.250 đến x=3.750 mm.
+- Thể hiện rõ cánh và cung mở của cửa nếu cách dựng bản vẽ cho phép. Không để cửa, cánh mở hoặc cửa sổ bị bỏ qua mà không thông báo.
+
+ĐỒ NỘI THẤT
+Vẽ đồ nội thất bằng đường bao hình chữ nhật theo các tọa độ sau. Mỗi cặp tọa độ là hai góc đối diện; kích thước ghi là kích thước phủ bì trên mặt bằng:
+- Giường 1.600 × 2.000 mm: từ (350,1.200) đến (2.350,2.800).
+- Tab đầu giường phía Nam 400 × 400 mm: từ (350,750) đến (750,1.150).
+- Tab đầu giường phía Bắc 400 × 400 mm: từ (350,2.850) đến (750,3.250).
+- Tủ quần áo 600 × 1.800 mm: từ (5.000,400) đến (5.600,2.200).
+- Bàn làm việc 1.200 × 600 mm: từ (4.000,3.300) đến (5.200,3.900).
+- Ghế 500 × 500 mm: từ (4.350,2.700) đến (4.850,3.200).
+
+Giữ lối đi từ cửa vào phòng thông thoáng, không để đồ nội thất chạm hoặc cắt qua tường, cửa, cửa sổ hay nhau. Nếu có thể, đặt đồ nội thất, chữ và kích thước trên các lớp bản vẽ riêng, dễ đọc; không cần tạo tên lớp theo một tiêu chuẩn cụ thể.
+
+TÊN PHÒNG VÀ KÍCH THƯỚC
+- Ghi nguyên văn “PHÒNG NGỦ 01 — 24 m²” gần giữa phòng, khoảng vị trí (3.000,2.000). Chữ cao khoảng 120 mm.
+- Ghi nhãn lên đồ nội thất nếu bố cục cho phép: “GIƯỜNG 1600 × 2000” ở khoảng (1.350,1.950); “TỦ 600 × 1800” ở (5.300,1.300); “BÀN 1200 × 600” ở (4.600,3.600); “GHẾ 500 × 500” ở (4.600,2.950). Không cần ghi nhãn hai tab đầu giường.
+- Ghi kích thước thông thủy ngang 6.000 mm và dọc 4.000 mm ở bên ngoài phòng, tránh chồng lên cửa và nội thất.
+- Ghi thêm chiều dày tường 200 mm, chiều rộng cửa đi 900 mm và cửa sổ 1.500 mm.
+- Có thể dùng các mốc sau để đặt đường kích thước: ngang phòng từ (0,0) đến (6.000,0), đặt đường kích thước gần (3.000,-700); dọc phòng từ (0,0) đến (0,4.000), đặt gần (-700,2.000); tường từ (1.000,-200) đến (1.000,0), đặt gần (700,-100); cửa từ (2.550,0) đến (3.450,0), đặt gần (3.000,-400); cửa sổ từ (2.250,4.000) đến (3.750,4.000), đặt gần (3.000,4.500). Hướng chữ số theo cách thể hiện kích thước thông dụng, dễ đọc.
+- Sắp xếp chữ và đường kích thước gọn gàng, tránh che khuất tường, cửa và đồ nội thất.
+
+KIỂM TRA VÀ LƯU BẢN VẼ
+- Trước khi vẽ, tạo một bản vẽ mới, đặt đơn vị millimet và kiểm tra lại đơn vị. Chỉ dựng hình khi đã xác nhận được đơn vị.
+- Sau khi vẽ, đọc lại bản vẽ để kiểm tra kích thước lọt lòng 6.000 × 4.000 mm, tường dày 200 mm nằm phía ngoài, vị trí và bề rộng cửa/cửa sổ, cùng kích thước và vị trí đồ nội thất.
+- Nếu đo được diện tích từ đường bao thực tế, xác nhận diện tích có đúng 24 m² không. Không dùng dòng chữ “24 m²” thay cho phép đo.
+- Kiểm tra cửa mở vào phòng đúng hướng và các đường bao không bị đứt, chồng lấn hoặc va chạm. Nếu có thể xem bản xem trước, phóng vừa toàn bộ mặt bằng và kiểm tra trực quan trước khi kết thúc.
+- Lưu bản vẽ với tên `Phong_ngu_01.dwg` trong thư mục mà máy chủ cho phép. Không ghi đè file có sẵn. Nếu chưa biết thư mục lưu được phép hoặc tên file đã tồn tại, hãy báo để tôi chọn cách lưu.
+- Nếu tạo được ảnh xem trước, lưu ảnh cùng thư mục với bản vẽ.
+
+Hãy thực hiện liên tục theo yêu cầu này; nếu cần xử lý tiếp dựa trên kết quả vừa tạo, hãy tự tiếp tục và không yêu cầu tôi gửi lại nội dung. Cuối cùng, cho tôi biết file được lưu ở đâu, kích thước/diện tích nào đã kiểm tra được, ảnh xem trước có tạo được không và phần nào còn chưa xác minh. Chỉ nói đã hoàn thành những gì thực sự có trong bản vẽ.

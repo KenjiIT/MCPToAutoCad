@@ -1,0 +1,1349 @@
+// -----------------------------------------------------------------------------
+// Horizun Revit MCP - one composable query instead of a tool per question.
+// -----------------------------------------------------------------------------
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Horizun.Revit.Core;
+
+namespace Horizun.Revit.Commands
+{
+    public sealed class QueryModelCommand : ICommand
+    {
+        public string Name => "horizun_query_model";
+        public string Description => "Composable, federated, paginated model query with explicit coverage.";
+
+        public CommandResult Execute(UIApplication app, string paramsJson)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            JObject request;
+            try { request = string.IsNullOrWhiteSpace(paramsJson) ? new JObject() : JObject.Parse(paramsJson); }
+            catch (JsonException ex) { return CommandResult.Fail("Parameters must be a JSON object: " + ex.Message); }
+            try { request = QueryResponseOptions.Prepare(request); }
+            catch (ArgumentException ex) { return CommandResult.Fail(ex.Message); }
+            string responseMode = request.Value<string>("response_mode") ?? "full";
+
+            Document host = app.ActiveUIDocument?.Document;
+            if (host == null) return CommandResult.Fail("No active Revit document.");
+            // A READ THAT NAMES A DOCUMENT READS THAT ONE OR NOTHING. MEASURED (campaign 4): a query
+            // naming a model just reopened answered 0 rows from another document, cleanly.
+            CommandResult wrongDocument = DocumentGate.ReadGuard(host, request, "horizun_query_model");
+            if (wrongDocument != null) return wrongDocument;
+
+            bool includeLinks = request["include_links"] == null || request.Value<bool>("include_links");
+            string scope = (request.Value<string>("scope") ?? "model").ToLowerInvariant();
+            // Conservative eligibility: a workset or view visibility toggle can be
+            // non-transactional. Federated and workshared queries always remeasure.
+            bool reuse = request.Value<string>("cache_mode") == "reuse";
+            bool cacheEligible = reuse && QueryCacheLifecycle.Ready && !includeLinks && scope == "model" && !host.IsWorkshared;
+            long cacheEpoch = QueryCacheLifecycle.Cache.Epoch;
+            var cacheRequest = (JObject)request.DeepClone();
+            cacheRequest.Remove("cache_mode"); cacheRequest.Remove("include_diagnostics");
+            string cacheKey = cacheEligible ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(host).ToString(CultureInfo.InvariantCulture) + ":" +
+                RequestFingerprint.Sha256Hex(RequestFingerprint.Canonical(cacheRequest)) : null;
+            if (cacheEligible && QueryCacheLifecycle.Cache.TryGet(cacheKey, cacheEpoch, out JObject cached))
+                return Finish(cached, request, timer, 0, "hit", null, cacheEpoch);
+            if (scope != "model" && scope != "current_view" && scope != "view")
+                return CommandResult.Fail("scope must be model, current_view or view.");
+            if (includeLinks && scope != "model")
+                return CommandResult.Fail(
+                    "View-scoped queries and include_links=true cannot be combined honestly: a host ViewId is not " +
+                    "a view in a linked document. Use scope=model with links, or include_links=false for a host view.");
+
+            // Read only the models the caller names (Core/QuerySourceFilterRules.cs). The other
+            // documents are never collected, and a name that matches nothing refuses.
+            QuerySourceFilter sourceFilter = QuerySourceFilter.Parse(request, out string sourceFilterError);
+            if (sourceFilterError != null) return CommandResult.Fail(sourceFilterError);
+            var availableSources = new List<QuerySourceFilter.Source> { new QuerySourceFilter.Source { Kind = "host", Title = host.Title } };
+            if (sourceFilter.Active)
+            {
+                if (!includeLinks && sourceFilter.NamesALink)
+                    return CommandResult.Fail("source_models/link_instance_ids name a linked model, but include_links=false reads the " +
+                                              "host only. Drop include_links=false, or name only \"host\". Nothing was read.");
+                if (includeLinks)
+                    foreach (RevitLinkInstance link in new FilteredElementCollector(host).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
+                    {
+                        Document linked = null;
+                        try { linked = link.GetLinkDocument(); } catch { }
+                        if (linked != null)
+                            availableSources.Add(new QuerySourceFilter.Source { Kind = "link", Title = linked.Title, LinkInstanceId = Rid.Value(link.Id) });
+                    }
+                string unmatched = sourceFilter.Unmatched(availableSources);
+                if (unmatched != null) return CommandResult.Fail(unmatched);
+            }
+
+            ElementId viewId = null;
+            if (scope == "current_view") viewId = app.ActiveUIDocument?.ActiveView?.Id;
+            else if (scope == "view")
+            {
+                long raw = request.Value<long?>("view_id") ?? -1;
+                if (!Rid.CanRepresent(raw)) return CommandResult.Fail("view_id is required and must be a valid ElementId for scope=view.");
+                View view = host.GetElement(Rid.Make(raw)) as View;
+                if (view == null) return CommandResult.Fail("view_id does not identify a view in the active document.");
+                viewId = view.Id;
+            }
+
+            List<string> categories = Strings(request["categories"] as JArray);
+            List<string> returnParameters = Strings(request["return_parameters"] as JArray);
+
+            // ---- The payload diet (field report 2026-08-04). Measured: ~741 characters
+            // per row to read three numbers per wall - 500 walls cost 370,299 characters,
+            // most of it identity fields repeated per row and five-field parameter
+            // objects where the caller wanted one number.
+            string parameterFormat = (request.Value<string>("parameter_format") ?? "full").ToLowerInvariant();
+            if (parameterFormat != "full" && parameterFormat != "compact")
+                return CommandResult.Fail("parameter_format must be 'full' or 'compact'.");
+            List<string> returnFields = Strings(request["return_fields"] as JArray);
+            HashSet<string> fieldSet = null;
+            if (returnFields.Count > 0)
+            {
+                var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "source_reference", "unique_id", "category", "name", "family", "type", "type_id", "level",
+                    "is_element_type", "source_kind", "source_model", "link_instance_id",
+                    "host_id", "host_category",
+                    "is_view_template", "view_template_id", "view_type"
+                };
+                foreach (string f in returnFields)
+                    if (!known.Contains(f))
+                        return CommandResult.Fail("return_fields '" + f + "' is not a row field. Known: " +
+                                                  string.Join(", ", known.OrderBy(x => x)) + ". element_id is always present.");
+                fieldSet = new HashSet<string>(returnFields, StringComparer.OrdinalIgnoreCase);
+            }
+            if (responseMode == "summary") fieldSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // ---- Aggregation, requested. Measured need (field report 2026-08-04): every
+            // query in a real session ended in group-and-count, none possible server-side,
+            // and the workaround was query -> token overflow -> dump to disk -> a script,
+            // three times. A histogram request should be one call.
+            List<string> groupBy = Strings(request["group_by"] as JArray);
+            List<string> sumParameters = Strings(request["sum_parameters"] as JArray);
+            foreach (string g in groupBy)
+                if (g != "category" && g != "level" && g != "type" && g != "family" &&
+                    g != "source_model" && g != "source_kind")
+                    return CommandResult.Fail("group_by '" + g + "' is not a grouping key. Known: category, level, " +
+                                              "type, family, source_model, source_kind.");
+            bool compactRows = parameterFormat == "compact" && groupBy.Count == 0;
+            if (sumParameters.Count > 0 && groupBy.Count == 0)
+                return CommandResult.Fail("sum_parameters requires group_by: a sum with no groups is a single row " +
+                                          "the summary already carries, and silently treating it as one group would " +
+                                          "answer a question that was not asked.");
+            if (groupBy.Count > 0 && !string.IsNullOrWhiteSpace(request.Value<string>("cursor")))
+                return CommandResult.Fail("group_by and cursor cannot be combined: groups are computed over the " +
+                                          "WHOLE matched set in one call, so there is no page to resume.");
+            // The sums read from each row's projected parameters, so make sure they are
+            // projected - without echoing the internal union back as if the caller asked
+            // for those columns.
+            List<string> projected = returnParameters;
+            if (sumParameters.Count > 0)
+                projected = returnParameters.Union(sumParameters, StringComparer.OrdinalIgnoreCase).ToList();
+            JArray predicates = request["parameters"] as JArray ?? new JArray();
+            foreach (JToken token in predicates)
+            {
+                JObject p = token as JObject;
+                if (p == null || string.IsNullOrWhiteSpace(p.Value<string>("name")) ||
+                    string.IsNullOrWhiteSpace(p.Value<string>("operator")))
+                    return CommandResult.Fail("Every parameters entry must be an object with name and operator.");
+                string op = p.Value<string>("operator").ToLowerInvariant();
+                if (op != "exists" && op != "not_exists" && p["value"] == null)
+                    return CommandResult.Fail("Parameter predicate '" + p.Value<string>("name") + "' with operator '" + op + "' requires value.");
+            }
+
+            Box queryBox;
+            string boxError;
+            if (!TryReadBox(request["bounding_box"] as JObject, out queryBox, out boxError))
+                return CommandResult.Fail(boxError);
+
+            string coordinateUnits = (request.Value<string>("coordinate_units") ?? "mm").ToLowerInvariant();
+            double coordinateScale;
+            if (!TryScaleFromFeet(coordinateUnits, out coordinateScale))
+                return CommandResult.Fail("coordinate_units must be mm, m or feet.");
+            bool includeBox = request.Value<bool?>("include_bounding_box") == true;
+            bool includeTypes = request.Value<bool?>("include_types") == true;
+            bool includeMep = request.Value<bool?>("include_mep") == true;
+
+            int maxRows = Math.Max(1, Math.Min(500, request.Value<int?>("max_rows") ?? 100));
+            // include_room (needs phase): each row's room/space, read by RoomMembershipReader.
+            RoomMembershipReader rooms = null;
+            if (request.Value<bool?>("include_room") == true)
+            {
+                if (groupBy.Count > 0 || responseMode == "summary")
+                    return CommandResult.Fail("include_room reports per row; with group_by or response_mode 'summary' there are " +
+                                              "no rows, and the rooms would be silently dropped.");
+                string roomProblem;
+                rooms = RoomMembershipReader.Create(host, request.Value<string>("phase"), out roomProblem);
+                if (rooms == null) return CommandResult.Fail("include_room: " + roomProblem);
+            }
+            else if (request["phase"] != null)
+                return CommandResult.Fail("phase is read only with include_room=true; alone it would be silently ignored.");
+            var matched = new List<Row>();
+            var summary = responseMode == "summary" && !includeMep ? new QuerySummaryAccumulator() : null;
+            var unreadable = new JArray();
+            int unreadableTotal = 0;
+            long collectionStartMs = timer.ElapsedMilliseconds;
+
+            // OPT-IN cooperative reading, parsed ONCE. Absent means today's behaviour, byte
+            // for byte: no scope is opened and no field is added to the reply. See
+            // Core/CooperativeReadOptions.cs for why a published reader may not change
+            // underneath its callers.
+            string coopFingerprint = CooperativeOptions.FingerprintOf(request, Name, host);
+            CooperativeOptions cooperative = CooperativeOptions.Read(request, coopFingerprint);
+            if (cooperative.Refusal != null)
+                return CommandResult.Fail("cooperative: " + cooperative.Refusal);
+            // ONE budget for the whole read, host and links together.
+            CooperativeRead.Scope coopScope = cooperative.Begin("query_model", 0);
+            // The summed parameters whose SPEC each row records, so a sum can name its unit.
+            HashSet<string> sumSet = sumParameters.Count > 0
+                ? new HashSet<string>(sumParameters, StringComparer.OrdinalIgnoreCase) : null;
+            // Compact numbers in the host's display units, named once per parameter
+            // (Core/CompactUnitRules.cs) - never a bare internal cubic foot.
+            CompactUnitTally compactUnits = compactRows && returnParameters.Count > 0 ? new CompactUnitTally() : null;
+            var hostUnits = new Dictionary<string, DisplayUnitFact>(StringComparer.Ordinal);
+            Func<string, DisplayUnitFact> hostUnit = key =>
+            {
+                if (string.IsNullOrEmpty(key)) return null;
+                if (!hostUnits.TryGetValue(key, out DisplayUnitFact u)) hostUnits[key] = u = DisplayUnit(host, key);
+                return u;
+            };
+
+            if (sourceFilter.Admits(availableSources[0]))
+                Collect(host, "host", host.Title, null, Transform.Identity, viewId, categories, request,
+                        predicates, projected, queryBox, includeBox, coordinateScale, includeTypes, includeMep,
+                        fieldSet, compactRows, matched, unreadable, ref unreadableTotal, summary,
+                        coopScope, cooperative, rooms, sumSet, compactUnits, hostUnit);
+
+            if (includeLinks)
+            {
+                foreach (RevitLinkInstance link in new FilteredElementCollector(host)
+                    .OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
+                {
+                    Document linked = null;
+                    try { linked = link.GetLinkDocument(); }
+                    catch (Exception ex)
+                    {
+                        AddUnreadable(unreadable, ref unreadableTotal, new JObject
+                        {
+                            ["link_instance_id"] = Rid.Value(link.Id), ["source_model"] = link.Name,
+                            ["reason"] = "link document could not be read: " + ex.Message
+                        });
+                        continue;
+                    }
+                    if (linked == null) continue; // FederatedVisibility names every unloaded link below.
+                    if (!sourceFilter.Admits(new QuerySourceFilter.Source { Kind = "link", Title = linked.Title, LinkInstanceId = Rid.Value(link.Id) }))
+                        continue;
+                    Transform transform;
+                    try { transform = link.GetTotalTransform() ?? Transform.Identity; }
+                    catch (Exception ex)
+                    {
+                        AddUnreadable(unreadable, ref unreadableTotal, new JObject
+                        {
+                            ["link_instance_id"] = Rid.Value(link.Id), ["source_model"] = linked.Title,
+                            ["reason"] = "link transform could not be read: " + ex.Message
+                        });
+                        continue;
+                    }
+                    if (coopScope != null && !coopScope.Complete) break;
+                    Collect(linked, "link", linked.Title, Rid.Value(link.Id), transform, null, categories, request,
+                            predicates, projected, queryBox, includeBox, coordinateScale, includeTypes, includeMep,
+                            fieldSet, compactRows, matched, unreadable, ref unreadableTotal, summary,
+                            coopScope, cooperative, rooms, sumSet, compactUnits, hostUnit);
+                }
+            }
+
+            long collectMs = timer.ElapsedMilliseconds - collectionStartMs;
+            string cacheStatus = !reuse ? "bypass" : cacheEligible ? "miss" : "ineligible";
+            if (summary != null)
+            {
+                JObject summaryCoverage = FederatedVisibility.Measure(host, includeLinks);
+                var summaryResult = new JObject
+                {
+                    ["document"] = host.Title, ["scope"] = scope,
+                    ["view_id"] = viewId == null ? JValue.CreateNull() : new JValue(Rid.Value(viewId)),
+                    ["include_links"] = includeLinks, ["matched_total"] = summary.Count,
+                    ["coverage_complete"] = summaryCoverage.Value<bool>("coverage_complete") && unreadableTotal == 0,
+                    ["unreadable_total"] = unreadableTotal, ["unreadable_shown"] = unreadable.Count,
+                    ["unreadable_truncated"] = unreadableTotal > unreadable.Count, ["unreadable"] = unreadable,
+                    ["federated_coverage"] = summaryCoverage, ["summary"] = summary.ToJson()
+                };
+                if (sourceFilter.Active) summaryResult["source_filter"] = sourceFilter.ToJson(availableSources);
+                return Finish(QueryResponseOptions.Shape(summaryResult, responseMode), request, timer, collectMs,
+                              cacheStatus, cacheKey, cacheEpoch);
+            }
+
+            matched = matched.OrderBy(r => r.SourceKind, StringComparer.Ordinal)
+                             .ThenBy(r => r.SourceModel, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(r => r.LinkInstanceId ?? -1)
+                             .ThenBy(r => r.Id).ToList();
+
+            string queryHash = QueryHash(request);
+            string setHash = ResultSetHash(matched);
+            int offset = 0;
+            string cursor = request.Value<string>("cursor");
+            if (!string.IsNullOrWhiteSpace(cursor))
+            {
+                string cursorError;
+                if (!TryCursor(cursor, queryHash, setHash, out offset, out cursorError))
+                    return CommandResult.Fail(cursorError);
+            }
+            if (offset > matched.Count)
+                return CommandResult.Fail("The cursor starts beyond the current result set. Re-run without cursor.");
+
+            if (groupBy.Count > 0)
+            {
+                JObject aggCoverage = FederatedVisibility.Measure(host, includeLinks);
+                var aggregated = new JObject
+                {
+                    ["document"] = host.Title,
+                    ["scope"] = scope,
+                    ["include_links"] = includeLinks,
+                    ["matched_total"] = matched.Count,
+                    ["group_by"] = new JArray(groupBy),
+                    ["groups"] = Aggregate(matched, groupBy, sumParameters, out bool groupsTruncated,
+                                           specKey => DisplayUnit(host, specKey)),
+                    ["groups_truncated"] = groupsTruncated,
+                    // The same honesty block a row answer carries: a histogram over a
+                    // model with five links unloaded is a histogram of what was VISIBLE.
+                    ["coverage_complete"] = aggCoverage.Value<bool>("coverage_complete") && unreadableTotal == 0,
+                    ["unreadable_total"] = unreadableTotal,
+                    ["unreadable_shown"] = unreadable.Count,
+                    ["unreadable_truncated"] = unreadableTotal > unreadable.Count,
+                    ["unreadable"] = unreadable,
+                    ["federated_coverage"] = aggCoverage,
+                    ["note"] = "Aggregated server-side; no rows were returned. Drop group_by to page through rows."
+                };
+                if (sourceFilter.Active) aggregated["source_filter"] = sourceFilter.ToJson(availableSources);
+                // Which source named each level (Core/LevelResolutionRules): the "(no level)"
+                // group is exactly the "(none)" count here, nothing else. Present only when
+                // the caller grouped by level, so other aggregate replies are unchanged.
+                if (groupBy.Contains("level"))
+                    aggregated["level_sources"] = Counts(matched, r => r.LevelSource ?? LevelResolutionRules.NoSourceLabel);
+                return Finish(aggregated, request, timer, collectMs, cacheStatus, cacheKey, cacheEpoch);
+            }
+
+            List<Row> page = matched.Skip(offset).Take(maxRows).ToList();
+            int nextOffset = offset + page.Count;
+            string nextCursor = nextOffset < matched.Count ? MakeCursor(nextOffset, queryHash, setHash) : null;
+
+            JObject coverage = FederatedVisibility.Measure(host, includeLinks);
+            // AND THE READ ITSELF HAS TO HAVE FINISHED. This result is CACHED when coverage
+            // is complete; a read that stopped early and still claimed complete coverage
+            // would be stored and handed to later callers as a full answer, outliving the
+            // request that produced it.
+            bool coverageComplete = coverage.Value<bool>("coverage_complete") && unreadableTotal == 0
+                                    && (coopScope == null || coopScope.Complete);
+            var queryResult = new JObject
+            {
+                ["document"] = host.Title,
+                ["scope"] = scope,
+                ["view_id"] = viewId == null ? JValue.CreateNull() : new JValue(Rid.Value(viewId)),
+                ["include_links"] = includeLinks,
+                ["matched_total"] = matched.Count,
+                ["returned"] = page.Count,
+                ["offset"] = offset,
+                ["truncated"] = nextCursor != null,
+                ["next_cursor"] = nextCursor == null ? JValue.CreateNull() : new JValue(nextCursor),
+                ["result_set_fingerprint"] = setHash.Substring(0, 16),
+                ["coverage_complete"] = coverageComplete,
+                ["unreadable_total"] = unreadableTotal,
+                ["unreadable_shown"] = unreadable.Count,
+                ["unreadable_truncated"] = unreadableTotal > unreadable.Count,
+                ["unreadable"] = unreadable,
+                ["federated_coverage"] = coverage,
+                ["summary"] = Summary(matched),
+                ["rows"] = new JArray(page.Select(r => r.Json))
+            };
+            if (rooms != null) queryResult["room_membership"] = rooms.Summary();
+            if (sourceFilter.Active) queryResult["source_filter"] = sourceFilter.ToJson(availableSources);
+            if (compactUnits != null && compactUnits.Any)
+            {
+                queryResult["parameter_units"] = compactUnits.ToJson();
+                queryResult["parameter_units_means"] = CompactUnitTally.Means;
+            }
+            // Present ONLY when the caller asked. Null is dropped rather than written, so a
+            // reply to an ordinary request is byte-identical to what it was.
+            JObject coopReport = cooperative.Report(
+                coopScope, offset + page.Count, coopFingerprint,
+                nextCursor != null || (coopScope != null && !coopScope.Complete),
+                ownCursorField: "next_cursor");
+            if (coopReport != null) queryResult["cooperative"] = coopReport;
+            if (includeMep)
+            {
+                // Aggregated over every MATCHED row (not only the page), because "how
+                // many open connectors" is a model question, not a pagination artifact.
+                int mepRows = 0, mepConnectorTotal = 0, mepOpenTotal = 0;
+                foreach (Row r in matched)
+                {
+                    var block = r.Json["mep"] as JObject;
+                    if (block == null) continue;
+                    mepRows++;
+                    mepConnectorTotal += (block["connectors"] as JArray)?.Count ?? 0;
+                    mepOpenTotal += block.Value<int?>("open_connectors") ?? 0;
+                }
+                queryResult["mep_summary"] = new JObject
+                {
+                    ["rows_with_connectors"] = mepRows,
+                    ["connectors"] = mepConnectorTotal,
+                    ["open_connectors"] = mepOpenTotal
+                };
+            }
+            return Finish(QueryResponseOptions.Shape(queryResult, responseMode), request, timer, collectMs,
+                          cacheStatus, cacheKey, cacheEpoch);
+        }
+
+        private static CommandResult Finish(JObject result, JObject request, System.Diagnostics.Stopwatch timer,
+                                            long collectMs, string cacheStatus, string cacheKey, long epoch)
+        {
+            // Never cache an incomplete measurement. Diagnostic metadata describes
+            // this invocation, not the original miss, and is not stored in the cache.
+            if (cacheKey != null && result.Value<bool?>("coverage_complete") == true)
+                QueryCacheLifecycle.Cache.Store(cacheKey, epoch, result);
+            if (request.Value<bool?>("include_diagnostics") == true)
+            {
+                long measuredMs = timer.ElapsedMilliseconds;
+                int responseBytes = Encoding.UTF8.GetByteCount(result.ToString(Formatting.None));
+                result["query_diagnostics"] = new JObject
+                {
+                    ["cache"] = cacheStatus, ["collect_ms"] = collectMs,
+                    ["prepare_shape_and_cache_ms"] = Math.Max(0, measuredMs - collectMs),
+                    ["command_ms"] = measuredMs, ["data_bytes_before_diagnostics"] = responseBytes,
+                    ["scope"] = "command only; excludes transport and queue wait",
+                    ["cache_eligibility"] = "opt-in, host-only, non-workshared, model scope; 5-second maximum age"
+                };
+            }
+            return CommandResult.Ok(result);
+        }
+
+        private static void Collect(Document source, string sourceKind, string sourceName, long? linkId,
+                                    Transform transform, ElementId viewId, List<string> categories, JObject request,
+                                    JArray predicates, List<string> returnParameters, Box queryBox, bool includeBox,
+                                    double coordinateScale, bool includeTypes, bool includeMep, HashSet<string> fields,
+                                    bool compactParameters, List<Row> rows, JArray unreadable,
+                                    ref int unreadableTotal, QuerySummaryAccumulator summary = null,
+                                    CooperativeRead.Scope coopScope = null,
+                                    CooperativeOptions cooperative = null,
+                                    RoomMembershipReader rooms = null,
+                                    HashSet<string> sumSpecs = null,
+                                    CompactUnitTally compactUnits = null,
+                                    Func<string, DisplayUnitFact> hostUnit = null)
+        {
+            HashSet<long> categoryIds = ResolveCategories(source, categories, unreadable, ref unreadableTotal, sourceName);
+            FilteredElementCollector collector = viewId == null
+                ? new FilteredElementCollector(source)
+                : new FilteredElementCollector(source, viewId);
+            // Native quick filtering avoids materialising every category in managed
+            // code. Keep the TextNoteType supplement below for its special category.
+            if (categoryIds != null && categoryIds.Count > 0)
+                collector.WherePasses(new ElementMulticategoryFilter(categoryIds.Select(Rid.Make).ToList()));
+            // Revit refuses extraction from a collector with no native filter, even
+            // though the LINQ Cast/Where compiles. Apply a real ElementFilter before
+            // iteration. The OR is an explicit pass over types + instances when the
+            // caller requested both.
+            IEnumerable<Element> candidates = includeTypes
+                ? collector.WherePasses(new LogicalOrFilter(
+                    new ElementIsElementTypeFilter(false),
+                    new ElementIsElementTypeFilter(true))).Cast<Element>()
+                : collector.WhereElementIsNotElementType().Cast<Element>();
+
+            // TextNoteType is a real document type, but Revit's generic category
+            // collector does not return it under OST_TextNotes (measured on 2023:
+            // hundreds of note instances, zero styles). A caller asking explicitly
+            // for types in that category must not receive a false empty set. Sweep the
+            // class as the API's authoritative route and union by ElementId. This is
+            // deliberately narrow: no other category gets a guessed substitute.
+            // Explicit element_ids: the caller names EXACTLY the rows it wants -
+            // the verification read every write path needs. Ids resolve directly
+            // (never through category collectors), the other predicates still
+            // apply, and an id that resolves to nothing lands in unreadable
+            // rather than silently shrinking the answer. MEASURED on run 15:
+            // before this, element_ids was silently ignored and the reply carried
+            // arbitrary rows - a verification that read like it verified.
+            if (request["element_ids"] is JArray requestedIds && requestedIds.Count > 0)
+            {
+                var byId = new List<Element>();
+                foreach (JToken idToken in requestedIds)
+                {
+                    long rawId = (long)idToken;
+                    Element resolved = Rid.CanRepresent(rawId) ? source.GetElement(Rid.Make(rawId)) : null;
+                    if (resolved == null)
+                        AddUnreadable(unreadable, ref unreadableTotal,
+                            Error(sourceName, linkId, rawId, "element_ids: this id resolves to no element"));
+                    else byId.Add(resolved);
+                }
+                candidates = byId;
+            }
+
+            bool supplementTextTypes = includeTypes && RequestsTextNotes(categories) && request["element_ids"] == null;
+            if (supplementTextTypes)
+            {
+                IEnumerable<Element> textTypes = new FilteredElementCollector(source)
+                    .OfClass(typeof(TextNoteType)).Cast<Element>();
+                candidates = candidates.Concat(textTypes)
+                    .GroupBy(e => Rid.Value(e.Id)).Select(g => g.First());
+            }
+
+            // The caller's cooperative scope, when there is one. Parsed ONCE in Execute and
+            // shared across the host pass and every link pass: one budget for the whole read,
+            // because parsing it here would hand a fresh twenty seconds to each of six links.
+            //
+            // NO SKIPPING HERE. This command has its own cursor over the MATCHED set, and a
+            // second position over the EXAMINED elements would be a different number with the
+            // same name - and this method runs once per document, so resuming a federated
+            // read would skip the same count again inside every link.
+            var typeCache = new Dictionary<long, Element>();
+            var levels = new ElementLevelReader(source);
+            foreach (Element element in candidates)
+            {
+                // Between elements. A query that stopped early says so; one that stopped
+                // mid-element would return a row nobody could tell was incomplete.
+                if (coopScope != null && !coopScope.Continue()) break;
+                if (coopScope != null && cooperative != null && cooperative.UnitsExhausted(coopScope.Done)) break;
+                long id = Rid.Value(element.Id);
+                try
+                {
+                    if (categoryIds != null)
+                    {
+                        long? categoryId = CategoryId(source, element);
+                        if (categoryId == null || !categoryIds.Contains(categoryId.Value)) continue;
+                    }
+
+                    Element type = element as ElementType;
+                    if (type == null)
+                    {
+                        long typeId = Rid.Value(element.GetTypeId());
+                        if (!typeCache.TryGetValue(typeId, out type))
+                        { type = source.GetElement(element.GetTypeId()); typeCache[typeId] = type; }
+                    }
+                    string elementName = summary == null || !string.IsNullOrWhiteSpace(request.Value<string>("name"))
+                        ? Safe(() => element.Name) : null;
+                    string family = type is ElementType et ? Safe(() => et.FamilyName) : null;
+                    string typeName = type == null ? null : Safe(() => type.Name);
+                    LevelResolution levelRead = levels.Resolve(element);
+                    string level = levelRead.LevelName;
+                    string levelSource = LevelResolutionRules.SourceKey(levelRead);
+
+                    if (!Contains(elementName, request.Value<string>("name")) ||
+                        !Contains(family, request.Value<string>("family")) ||
+                        !Contains(typeName, request.Value<string>("type")) ||
+                        !Contains(level, request.Value<string>("level"))) continue;
+
+                    bool predicateUnknown;
+                    string predicateError;
+                    if (!PredicatesMatch(source, element, type, predicates, out predicateUnknown, out predicateError))
+                    {
+                        if (predicateUnknown)
+                            AddUnreadable(unreadable, ref unreadableTotal, Error(sourceName, linkId, id, predicateError));
+                        continue;
+                    }
+
+                    Box elementBox = QueryResponseOptions.ReadBounds(queryBox != null, includeBox,
+                        () => ElementBox(element, transform));
+                    if (queryBox != null)
+                    {
+                        if (elementBox == null)
+                        {
+                            AddUnreadable(unreadable, ref unreadableTotal,
+                                Error(sourceName, linkId, id, element is Level
+                                    ? "a level is a plane with no model extent, so a box cannot intersect it; filter levels by name or read their datum.elevation"
+                                    : "bounding box is unavailable, so intersection is unknown"));
+                            continue;
+                        }
+                        if (!elementBox.Intersects(queryBox)) continue;
+                    }
+
+                    // element_id is never projectable away: rows that cannot be told
+                    // apart are not an answer. Everything else is the caller's choice -
+                    // the identity and federation fields repeat identically down a page,
+                    // and at ~741 measured characters per row they were most of the bill.
+                    if (summary != null)
+                    {
+                        summary.Add(CategoryName(source, element), level, sourceKind, sourceName, linkId, id, levelSource);
+                        continue;
+                    }
+                    var json = new JObject { ["element_id"] = id };
+                    if (fields == null || fields.Contains("unique_id")) json["unique_id"] = Safe(() => element.UniqueId);
+                    if (fields != null && fields.Contains("source_reference"))
+                    {
+                        try { json["source_reference"] = SourceTraceStorage.Read(element); }
+                        catch(Exception ex) { json["source_reference_error"] = ex.Message; }
+                    }
+                    string categoryName = CategoryName(source, element);
+                    if (fields == null || fields.Contains("category")) json["category"] = categoryName;
+                    if (fields == null || fields.Contains("name")) json["name"] = elementName;
+                    if (fields == null || fields.Contains("family")) json["family"] = family;
+                    if (fields == null || fields.Contains("type")) json["type"] = typeName;
+                    if (fields == null || fields.Contains("type_id")) json["type_id"] = type == null ? JValue.CreateNull() : new JValue(Rid.Value(type.Id));
+                    if (fields == null || fields.Contains("level")) json["level"] = level;
+                    if (fields == null || fields.Contains("is_element_type")) json["is_element_type"] = element is ElementType;
+                    if (fields != null && fields.Contains("is_view_template")) json["is_view_template"] = element is View view ? (JToken)view.IsTemplate : JValue.CreateNull();
+                    if (fields != null && fields.Contains("view_template_id")) json["view_template_id"] = element is View templateView ? (JToken)Rid.Value(templateView.ViewTemplateId) : JValue.CreateNull();
+                    if (fields != null && fields.Contains("view_type")) json["view_type"] = element is View typedView ? (JToken)typedView.ViewType.ToString() : JValue.CreateNull();
+                    if (fields == null || fields.Contains("source_kind")) json["source_kind"] = sourceKind;
+                    if (fields == null || fields.Contains("source_model")) json["source_model"] = sourceName;
+                    if (fields == null || fields.Contains("link_instance_id")) json["link_instance_id"] = linkId == null ? JValue.CreateNull() : new JValue(linkId.Value);
+
+                    // WHAT IT LIVES IN.
+                    //
+                    // A door is not a thing that stands in a room: Revit hosts it
+                    // IN a wall, and a door placed without one is a door-shaped
+                    // object beside its own opening. It creates, it schedules, it
+                    // looks right in plan. The only way to tell the two apart is
+                    // to ask the model what the element's host is - and until now
+                    // there was no typed way to ask, so the answer had to be taken
+                    // from the testimony of whatever wrote it.
+                    if (fields == null || fields.Contains("host_id") || fields.Contains("host_category"))
+                    {
+                        Element hostElement = null;
+                        try { hostElement = (element as FamilyInstance)?.Host; } catch { }
+                        if (fields == null || fields.Contains("host_id"))
+                            json["host_id"] = hostElement == null
+                                ? JValue.CreateNull() : new JValue(Rid.Value(hostElement.Id));
+                        if (fields == null || fields.Contains("host_category"))
+                        {
+                            string hostCategory = null;
+                            try { hostCategory = hostElement?.Category?.Name; } catch { }
+                            json["host_category"] = hostCategory == null
+                                ? JValue.CreateNull() : new JValue(hostCategory);
+                        }
+                    }
+                    if (includeBox)
+                    {
+                        json["bounding_box"] = BoxJson(elementBox, coordinateScale);
+                        // Grids and levels: the line and the elevation, comparable across links.
+                        JObject datum = DatumJson(element, transform, coordinateScale, request.Value<string>("coordinate_units") ?? "mm");
+                        if (datum != null)
+                        {
+                            json["datum"] = datum;
+                            if (element is Grid && elementBox != null) json["bounding_box_source"] = DatumGeometryRules.SourceGridCurve;
+                        }
+                    }
+                    if (request.Value<bool?>("include_cad_provenance") == true)
+                    {
+                        // WHICH DRAWING, WHICH RULES AND WHICH READING built it - the
+                        // record every CAD command writes, read back as stored.
+                        string problem;
+                        CadProvenance cad = null;
+                        try { cad = CadProvenanceStore.Read(element, out problem); }
+                        catch (Exception ex) { problem = ex.Message; }
+                        json["cad_provenance"] = cad == null ? JValue.CreateNull() : (JToken)cad.ToJson();
+                        if (problem != null) json["cad_provenance_problem"] = problem;
+                    }
+                    if (request.Value<bool?>("include_orientation") == true)
+                    {
+                        JObject placement = Placement(element, transform, coordinateScale);
+                        if (placement != null) json["placement"] = placement;
+                    }
+                    if (rooms != null) json["room"] = rooms.ToJson(rooms.Locate(element, transform), coordinateScale);
+                    if (includeMep)
+                    {
+                        // Connector facts, opt-in: domain, shape/size, open or connected,
+                        // partners and system membership - the same reader the fitting
+                        // kind decides over, so discovery and creation describe one
+                        // connector one way. Elements without a connector manager carry
+                        // no block: absent is not the same as "zero connectors".
+                        ConnectorManager mepManager = MepFacts.ManagerOf(element);
+                        if (mepManager != null)
+                        {
+                            var mepConnectors = new JArray();
+                            int mepOpen = 0;
+                            foreach (Connector mepConnector in MepFacts.Ordered(mepManager))
+                            {
+                                if (!mepConnector.IsConnected) mepOpen++;
+                                mepConnectors.Add(MepFacts.Json(mepConnector, transform, coordinateScale));
+                            }
+                            json["mep"] = new JObject
+                            {
+                                ["connectors"] = mepConnectors,
+                                ["open_connectors"] = mepOpen
+                            };
+                        }
+                    }
+                    Dictionary<string, SumSpec> specs = null;
+                    if (returnParameters.Count > 0)
+                    {
+                        List<string> projectionErrors;
+                        // Compact converts by spec, so it records every projected parameter's.
+                        HashSet<string> recordSpecs = compactUnits != null
+                            ? new HashSet<string>(returnParameters, StringComparer.OrdinalIgnoreCase) : sumSpecs;
+                        if (recordSpecs != null) specs = new Dictionary<string, SumSpec>(StringComparer.OrdinalIgnoreCase);
+                        JObject full = ProjectParameters(source, element, type, returnParameters, out projectionErrors,
+                                                         recordSpecs, specs);
+                        foreach (string projectionError in projectionErrors)
+                            AddUnreadable(unreadable, ref unreadableTotal,
+                                Error(sourceName, linkId, id, projectionError));
+                        json["parameters"] = compactParameters ? CompactParameters(full, json, specs, compactUnits, hostUnit) : full;
+                    }
+
+                    rows.Add(new Row
+                    {
+                        Specs = specs,
+                        Id = id, SourceKind = sourceKind, SourceModel = sourceName,
+                        LinkInstanceId = linkId, Category = categoryName,
+                        TypeName = typeName, Family = family, Level = level, LevelSource = levelSource, Json = json
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AddUnreadable(unreadable, ref unreadableTotal, Error(sourceName, linkId, id, ex.Message));
+                }
+            }
+        }
+
+        private static bool RequestsTextNotes(IEnumerable<string> categories)
+            => categories != null && categories.Any(c =>
+                string.Equals(c, "OST_TextNotes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(c, "Text Notes", StringComparison.OrdinalIgnoreCase));
+
+        private static long? CategoryId(Document doc, Element element)
+        {
+            try
+            {
+                if (element?.Category != null) return Rid.Value(element.Category.Id);
+                if (element is TextNoteType)
+                {
+                    Category c = Category.GetCategory(doc, BuiltInCategory.OST_TextNotes);
+                    return c == null ? (long?)null : Rid.Value(c.Id);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string CategoryName(Document doc, Element element)
+        {
+            try
+            {
+                if (element?.Category != null) return element.Category.Name;
+                if (element is TextNoteType)
+                    return Category.GetCategory(doc, BuiltInCategory.OST_TextNotes)?.Name ?? "OST_TextNotes";
+            }
+            catch { }
+            return null;
+        }
+
+        private static HashSet<long> ResolveCategories(Document doc, List<string> names, JArray errors,
+                                                       ref int errorTotal, string source)
+        {
+            if (names.Count == 0) return null;
+            var ids = new HashSet<long>();
+            foreach (string name in names)
+            {
+                Category category = null;
+                BuiltInCategory bic;
+                if (Enum.TryParse(name, true, out bic))
+                    try { category = Category.GetCategory(doc, bic); } catch { }
+                if (category == null)
+                    try
+                    {
+                        foreach (Category c in doc.Settings.Categories)
+                            if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) { category = c; break; }
+                    }
+                    catch (Exception ex)
+                    {
+                        AddUnreadable(errors, ref errorTotal, new JObject
+                        { ["source_model"] = source, ["reason"] = "category table unreadable: " + ex.Message });
+                    }
+                if (category != null) ids.Add(Rid.Value(category.Id));
+            }
+            return ids;
+        }
+
+        private static bool PredicatesMatch(Document doc, Element element, Element type, JArray predicates,
+                                            out bool unknown, out string error)
+        {
+            unknown = false; error = null;
+            foreach (JObject predicate in predicates.OfType<JObject>())
+            {
+                string name = predicate.Value<string>("name");
+                string op = predicate.Value<string>("operator").ToLowerInvariant();
+                string scope;
+                Parameter p = ResolveParameter(element, type, name, out scope, out error);
+                if (error != null) { unknown = true; return false; }
+                if (op == "exists") { if (p == null) return false; continue; }
+                if (op == "not_exists") { if (p != null) return false; continue; }
+                if (p == null) return false;
+                if (!Compare(p, op, predicate["value"], out error))
+                {
+                    if (error != null) unknown = true;
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // One lookup for every reader that takes a parameter name: see
+        // Commands/ParameterResolver.cs and Core/ParameterResolutionRules.cs.
+        private static Parameter ResolveParameter(Element element, Element type, string spec,
+                                                   out string scope, out string error)
+            => ParameterResolver.Resolve(element, type, spec, out scope, out error);
+
+        private static bool Compare(Parameter p, string op, JToken expected, out string error)
+        {
+            error = null;
+            try
+            {
+                if (expected != null && (expected.Type == JTokenType.Integer || expected.Type == JTokenType.Float))
+                {
+                    double have;
+                    if (p.StorageType == StorageType.Double) have = p.AsDouble();
+                    else if (p.StorageType == StorageType.Integer) have = p.AsInteger();
+                    else if (p.StorageType == StorageType.ElementId) have = Rid.Value(p.AsElementId());
+                    else { error = "numeric comparison requested for non-numeric parameter '" + p.Definition?.Name + "'"; return false; }
+                    double want = expected.Value<double>();
+                    switch (op)
+                    {
+                        case "equals": return Math.Abs(have - want) <= 1e-9;
+                        case "not_equals": return Math.Abs(have - want) > 1e-9;
+                        case "gt": return have > want;
+                        case "gte": return have >= want;
+                        case "lt": return have < want;
+                        case "lte": return have <= want;
+                        default: error = "operator '" + op + "' is not valid for a numeric value"; return false;
+                    }
+                }
+
+                string haveText = ParameterText(p) ?? "";
+                string wantText = expected == null || expected.Type == JTokenType.Null ? "" :
+                    expected.Type == JTokenType.String ? expected.Value<string>() : expected.ToString(Formatting.None);
+                switch (op)
+                {
+                    case "equals": return string.Equals(haveText, wantText, StringComparison.OrdinalIgnoreCase);
+                    case "not_equals": return !string.Equals(haveText, wantText, StringComparison.OrdinalIgnoreCase);
+                    case "contains": return haveText.IndexOf(wantText, StringComparison.OrdinalIgnoreCase) >= 0;
+                    case "starts_with": return haveText.StartsWith(wantText, StringComparison.OrdinalIgnoreCase);
+                    case "ends_with": return haveText.EndsWith(wantText, StringComparison.OrdinalIgnoreCase);
+                    default: error = "operator '" + op + "' requires a numeric JSON value for ordering"; return false;
+                }
+            }
+            catch (Exception ex) { error = "parameter comparison failed: " + ex.Message; return false; }
+        }
+
+        /// <summary>
+        /// The compact projection: name -> raw value, and nothing else, for every
+        /// parameter that read cleanly. What did NOT read cleanly must not vanish into
+        /// the compactness - "compact" is a diet, not an amnesty - so absent and
+        /// unreadable parameters go to a parameter_issues object ON THE ROW, present
+        /// only when there is something in it. A caller who reads only the values gets
+        /// numbers that are real; a caller who checks parameter_issues sees everything
+        /// the full format would have told them. null stays reserved for a real stored
+        /// null (an empty string parameter reads as ""), never for "could not look".
+        /// </summary>
+        private static JObject CompactParameters(JObject full, JObject row, Dictionary<string, SumSpec> specs = null,
+                                                 CompactUnitTally units = null, Func<string, DisplayUnitFact> hostUnit = null)
+        {
+            var compact = new JObject();
+            JObject issues = null;
+            foreach (JProperty prop in full.Properties())
+            {
+                JObject cell = prop.Value as JObject;
+                if (cell == null) continue;
+                if (cell["read_error"] != null)
+                {
+                    (issues = issues ?? new JObject())[prop.Name] = "unreadable: " + (string)cell["read_error"];
+                    continue;
+                }
+                if (cell.Value<bool?>("exists") == false)
+                {
+                    (issues = issues ?? new JObject())[prop.Name] = "absent";
+                    continue;
+                }
+                SumSpec spec = null;
+                if (units != null && specs != null) specs.TryGetValue(prop.Name, out spec);
+                compact[prop.Name] = units == null || spec == null
+                    ? cell["raw"]
+                    : units.Value(prop.Name, cell["raw"], spec.Key, spec.Quantity, hostUnit?.Invoke(spec.Key));
+            }
+            if (issues != null) row["parameter_issues"] = issues;
+            return compact;
+        }
+
+        private static JObject ProjectParameters(Document doc, Element element, Element type, List<string> specs,
+                                                  out List<string> errors,
+                                                  HashSet<string> recordSpecFor = null,
+                                                  Dictionary<string, SumSpec> recordedSpecs = null)
+        {
+            errors = new List<string>();
+            var result = new JObject();
+            foreach (string spec in specs)
+            {
+                string scope, error;
+                Parameter p = ResolveParameter(element, type, spec, out scope, out error);
+                if (error != null)
+                {
+                    errors.Add(error);
+                    result[spec] = new JObject { ["read_error"] = error };
+                }
+                else if (p == null) result[spec] = new JObject { ["exists"] = false };
+                else
+                {
+                    result[spec] = new JObject
+                    {
+                        ["exists"] = true, ["scope"] = scope, ["storage_type"] = p.StorageType.ToString(),
+                        ["raw"] = Raw(p), ["display"] = Safe(() => p.AsValueString())
+                    };
+                    if (recordedSpecs != null && recordSpecFor != null && recordSpecFor.Contains(spec))
+                        recordedSpecs[spec] = SpecOf(p);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>A summed value's spec, classified for Core/SumUnitRules.</summary>
+        private sealed class SumSpec
+        {
+            public string Key;       // the spec TypeId; "" when it could not be read
+            public string Quantity;  // SumUnitRules.Length / Area / Volume / Measurable / Unitless / Identifier / Unknown
+        }
+
+        private static SumSpec SpecOf(Parameter p)
+        {
+            ForgeTypeId spec = null;
+            try { spec = p.Definition?.GetDataType(); } catch { spec = null; }
+            string key = spec == null ? "" : (spec.TypeId ?? "");
+            if (p.StorageType == StorageType.ElementId) return new SumSpec { Key = key, Quantity = SumUnitRules.Identifier };
+            if (key.Length == 0) return new SumSpec { Key = key, Quantity = SumUnitRules.Unknown };
+            // The same spec tests horizun_quantities' takeoff converts with.
+            if (spec == SpecTypeId.Length) return new SumSpec { Key = key, Quantity = SumUnitRules.Length };
+            if (spec == SpecTypeId.Area) return new SumSpec { Key = key, Quantity = SumUnitRules.Area };
+            if (spec == SpecTypeId.Volume) return new SumSpec { Key = key, Quantity = SumUnitRules.Volume };
+            bool measurable;
+            try { measurable = UnitUtils.IsMeasurableSpec(spec); }
+            catch { return new SumSpec { Key = key, Quantity = SumUnitRules.Unknown }; }
+            return new SumSpec { Key = key, Quantity = measurable ? SumUnitRules.Measurable : SumUnitRules.Unitless };
+        }
+
+        /// <summary>
+        /// The host document's display unit for a spec, or null when it cannot be read.
+        /// Factor and offset are measured with ConvertFromInternalUnits, so an affine unit
+        /// (a temperature) is recognised rather than assumed linear.
+        /// </summary>
+        private static DisplayUnitFact DisplayUnit(Document doc, string specKey)
+        {
+            if (doc == null || string.IsNullOrEmpty(specKey)) return null;
+            try
+            {
+                var spec = new ForgeTypeId(specKey);
+                ForgeTypeId unit = doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId();
+                double zero = UnitUtils.ConvertFromInternalUnits(0, unit);
+                double one = UnitUtils.ConvertFromInternalUnits(1, unit);
+                string label;
+                try { label = LabelUtils.GetLabelForUnit(unit); } catch { label = unit.TypeId; }
+                return new DisplayUnitFact { UnitTypeId = unit.TypeId, Label = label, Factor = one - zero, Offset = zero };
+            }
+            catch { return null; }
+        }
+
+        private static JToken Raw(Parameter p)
+        {
+            try
+            {
+                switch (p.StorageType)
+                {
+                    case StorageType.String: return p.AsString();
+                    case StorageType.Integer: return p.AsInteger();
+                    case StorageType.Double: return p.AsDouble();
+                    case StorageType.ElementId: return Rid.Value(p.AsElementId());
+                    default: return JValue.CreateNull();
+                }
+            }
+            catch (Exception ex) { return new JObject { ["read_error"] = ex.Message }; }
+        }
+
+        private static string ParameterText(Parameter p)
+        {
+            if (p.StorageType == StorageType.String) return p.AsString();
+            string displayed = p.AsValueString();
+            if (!string.IsNullOrEmpty(displayed)) return displayed;
+            JToken raw = Raw(p);
+            return raw?.Type == JTokenType.Null ? null : raw?.ToString(Formatting.None);
+        }
+
+        private static Box ElementBox(Element element, Transform transform)
+        {
+            BoundingBoxXYZ b = element.get_BoundingBox(null);
+            // Datums have no model box (their extents are per view). A grid's box is its
+            // curve's, in host coordinates; a level is a plane and gets none. Core/DatumGeometryRules.cs.
+            if (b == null && element is Grid grid) return GridBox(grid, transform);
+            if (b == null) return null;
+            Transform own = b.Transform ?? Transform.Identity;
+            var points = new List<XYZ>();
+            foreach (double x in new[] { b.Min.X, b.Max.X })
+                foreach (double y in new[] { b.Min.Y, b.Max.Y })
+                    foreach (double z in new[] { b.Min.Z, b.Max.Z })
+                    {
+                        XYZ p = own.OfPoint(new XYZ(x, y, z));
+                        points.Add((transform ?? Transform.Identity).OfPoint(p));
+                    }
+            return new Box(
+                new XYZ(points.Min(p => p.X), points.Min(p => p.Y), points.Min(p => p.Z)),
+                new XYZ(points.Max(p => p.X), points.Max(p => p.Y), points.Max(p => p.Z)));
+        }
+
+        /// <summary>A grid's curve points in host coordinates: its ends, or its tessellation when curved.</summary>
+        private static List<XYZ> GridPoints(Grid grid, Transform transform, out bool curved)
+        {
+            Curve c = grid.Curve;
+            curved = !(c is Line);
+            IList<XYZ> raw = curved ? c.Tessellate() : new List<XYZ> { c.GetEndPoint(0), c.GetEndPoint(1) };
+            Transform t = transform ?? Transform.Identity;
+            return raw.Select(p => t.OfPoint(p)).ToList();
+        }
+
+        private static Box GridBox(Grid grid, Transform transform)
+        {
+            try
+            {
+                double[][] box = DatumGeometryRules.BoxOf(GridPoints(grid, transform, out bool _).Select(p => new[] { p.X, p.Y, p.Z }));
+                return box == null ? null : new Box(new XYZ(box[0][0], box[0][1], box[0][2]), new XYZ(box[1][0], box[1][1], box[1][2]));
+            }
+            catch { return null; }
+        }
+
+        /// <summary>What a grid or a level IS, in host coordinates; null for any other element.</summary>
+        private static JObject DatumJson(Element element, Transform transform, double scale, string units)
+        {
+            try
+            {
+                Transform t = transform ?? Transform.Identity;
+                if (element is Grid grid)
+                {
+                    Curve c = grid.Curve;
+                    XYZ s = t.OfPoint(c.GetEndPoint(0)), e = t.OfPoint(c.GetEndPoint(1));
+                    List<XYZ> points = GridPoints(grid, transform, out bool curved);
+                    return DatumGeometryRules.Grid(new[] { s.X, s.Y, s.Z }, new[] { e.X, e.Y, e.Z }, curved,
+                        points.Select(p => new[] { p.X, p.Y, p.Z }).ToList(), scale, units);
+                }
+                if (element is Level level)
+                {
+                    double own = level.Elevation;
+                    return DatumGeometryRules.Level(t.OfPoint(new XYZ(0, 0, own)).Z, own, scale, units);
+                }
+            }
+            catch (Exception ex) { return new JObject { ["read_error"] = ex.Message }; }
+            return null;
+        }
+
+        private static bool TryReadBox(JObject o, out Box box, out string error)
+        {
+            box = null; error = null;
+            if (o == null) return true;
+            JArray min = o["min"] as JArray, max = o["max"] as JArray;
+            if (min == null || max == null || min.Count != 3 || max.Count != 3)
+            { error = "bounding_box.min and max must each contain exactly three numbers."; return false; }
+            double feetPerUnit;
+            if (!TryScaleToFeet((o.Value<string>("units") ?? "mm").ToLowerInvariant(), out feetPerUnit))
+            { error = "bounding_box.units must be mm, m or feet."; return false; }
+            try
+            {
+                var lo = new XYZ(min[0].Value<double>() * feetPerUnit, min[1].Value<double>() * feetPerUnit, min[2].Value<double>() * feetPerUnit);
+                var hi = new XYZ(max[0].Value<double>() * feetPerUnit, max[1].Value<double>() * feetPerUnit, max[2].Value<double>() * feetPerUnit);
+                if (lo.X > hi.X || lo.Y > hi.Y || lo.Z > hi.Z)
+                { error = "bounding_box.min must be <= max on every axis."; return false; }
+                box = new Box(lo, hi); return true;
+            }
+            catch (Exception ex) { error = "bounding_box coordinates are invalid: " + ex.Message; return false; }
+        }
+
+        private static bool TryScaleToFeet(string units, out double scale)
+        {
+            if (units == "feet") { scale = 1; return true; }
+            if (units == "m") { scale = 1.0 / 0.3048; return true; }
+            if (units == "mm") { scale = 1.0 / 304.8; return true; }
+            scale = 0; return false;
+        }
+
+        private static bool TryScaleFromFeet(string units, out double scale)
+        {
+            if (units == "feet") { scale = 1; return true; }
+            if (units == "m") { scale = 0.3048; return true; }
+            if (units == "mm") { scale = 304.8; return true; }
+            scale = 0; return false;
+        }
+
+        /// <summary>
+        /// WHERE AN INSTANCE STANDS AND WHICH WAY IT FACES, as Revit stores it - for
+        /// a check that must not borrow the placing code's reasoning. A family
+        /// instance gives its point, facing, hand, reflection flags and the stable
+        /// reference of the face it is hosted on; a wall its location line, width
+        /// and exterior normal. Nothing here is derived.
+        /// </summary>
+        private static JObject Placement(Element element, Transform transform, double scale)
+        {
+            Func<XYZ, JArray> P = p =>
+            {
+                XYZ q = transform == null ? p : transform.OfPoint(p);
+                return new JArray(Math.Round(q.X * scale, 3), Math.Round(q.Y * scale, 3), Math.Round(q.Z * scale, 3));
+            };
+            Func<XYZ, JArray> V = v =>
+            {
+                XYZ q = transform == null ? v : transform.OfVector(v);
+                return new JArray(Math.Round(q.X, 6), Math.Round(q.Y, 6), Math.Round(q.Z, 6));
+            };
+            try
+            {
+                var fi = element as FamilyInstance;
+                if (fi != null)
+                {
+                    var o = new JObject { ["kind"] = "family_instance" };
+                    var lp = fi.Location as LocationPoint;
+                    if (lp != null)
+                    {
+                        o["point"] = P(lp.Point);
+                        try { o["rotation_degrees"] = Math.Round(lp.Rotation * 180.0 / Math.PI, 4); } catch { }
+                    }
+                    try { o["facing"] = V(fi.FacingOrientation); } catch { }
+                    try { o["hand"] = V(fi.HandOrientation); } catch { }
+                    try
+                    {
+                        // A face-based family's facing lies in its host face; the way it
+                        // looks out of that face is its transform's Z axis.
+                        Transform t = fi.GetTotalTransform();
+                        o["transform"] = new JObject
+                        {
+                            ["origin"] = P(t.Origin),
+                            ["basis_x"] = V(t.BasisX),
+                            ["basis_y"] = V(t.BasisY),
+                            ["basis_z"] = V(t.BasisZ)
+                        };
+                    }
+                    catch { }
+                    try { o["mirrored"] = fi.Mirrored; } catch { }
+                    try { o["hand_flipped"] = fi.HandFlipped; } catch { }
+                    try { o["facing_flipped"] = fi.FacingFlipped; } catch { }
+                    try
+                    {
+                        Reference face = fi.HostFace;
+                        if (face != null)
+                        {
+                            o["host_face"] = face.ConvertToStableRepresentation(element.Document);
+                            // WHICH FACE, AND WHETHER IT IS STILL THERE. A face-hosted instance keeps its reference
+                            // after its host is edited; the reference may no longer resolve to a face, or name
+                            // another kind of face. Read, never assumed.
+                            string kind = CreateElementsPlacement.FaceKind(element.Document, fi.Host, face);
+                            o["host_face_kind"] = kind;
+                            o["host_face_resolves"] = kind != "unresolved";
+                            // ON ITS FACE, OR NOT: the instance's point measured against the face it names.
+                            try
+                            {
+                                var hf = element.Document.GetElement(face)?.GetGeometryObjectFromReference(face) as Face;
+                                XYZ at = (fi.Location as LocationPoint)?.Point;
+                                IntersectionResult pr = hf != null && at != null ? hf.Project(at) : null;
+                                if (pr != null)
+                                {
+                                    o["host_face_distance_mm"] = Math.Round(pr.Distance * 304.8, 1);
+                                    o["on_host_face"] = pr.Distance * 304.8 <= 1.0 && hf.IsInside(pr.UVPoint);
+                                }
+                                else if (hf != null) o["on_host_face"] = false;
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                    return o;
+                }
+                var wall = element as Wall;
+                if (wall != null)
+                {
+                    var o = new JObject { ["kind"] = "wall" };
+                    var line = (wall.Location as LocationCurve)?.Curve;
+                    if (line != null)
+                    {
+                        o["start"] = P(line.GetEndPoint(0));
+                        o["end"] = P(line.GetEndPoint(1));
+                    }
+                    try { o["width"] = Math.Round(wall.Width * scale, 3); } catch { }
+                    try { o["exterior_normal"] = V(wall.Orientation); } catch { }
+                    try { o["flipped"] = wall.Flipped; } catch { }
+                    return o;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static JToken BoxJson(Box b, double scale)
+        {
+            if (b == null) return JValue.CreateNull();
+            return new JObject
+            {
+                ["min"] = new JArray(b.Min.X * scale, b.Min.Y * scale, b.Min.Z * scale),
+                ["max"] = new JArray(b.Max.X * scale, b.Max.Y * scale, b.Max.Z * scale)
+            };
+        }
+
+        /// <summary>
+        /// Group-and-count (and sum) over the WHOLE matched set. The labels for a missing
+        /// key are the same ones Summary() uses, so "(no level)" means the same thing in
+        /// both places. Sums are reported with their own arithmetic shown: how many
+        /// elements contributed, how many had no such parameter, how many could not be
+        /// read, how many held a non-numeric value. A sum over half a group must not read
+        /// like a sum over the group - that substitution is what this repository exists
+        /// to refuse, and it is easiest to commit inside an aggregate, where the rows
+        /// that would have shown the gap are exactly what the caller asked not to see.
+        /// </summary>
+        private static JArray Aggregate(List<Row> rows, List<string> groupBy, List<string> sums,
+                                        out bool truncated, Func<string, DisplayUnitFact> displayUnit = null)
+        {
+            var displayCache = new Dictionary<string, DisplayUnitFact>(StringComparer.Ordinal);
+            var groups = rows.GroupBy(r => string.Join("\u001f", groupBy.Select(g => KeyOf(r, g))))
+                             .OrderByDescending(g => g.Count())
+                             .ThenBy(g => g.Key, StringComparer.Ordinal)
+                             .ToList();
+            // Bounded like every other answer. 500 groups is far past any histogram a
+            // person reads; past it the caller is enumerating, and rows do that better.
+            const int maxGroups = 500;
+            truncated = groups.Count > maxGroups;
+            var result = new JArray();
+            foreach (var g in groups.Take(maxGroups))
+            {
+                var key = new JObject();
+                string[] parts = g.Key.Split('\u001f');
+                for (int i = 0; i < groupBy.Count; i++) key[groupBy[i]] = parts[i];
+
+                var entry = new JObject { ["key"] = key, ["count"] = g.Count() };
+                if (sums.Count > 0)
+                {
+                    var sumBlock = new JObject();
+                    foreach (string param in sums)
+                    {
+                        double total = 0; int summed = 0, absent = 0, unreadable = 0, nonNumeric = 0;
+                        var quantityBySpec = new Dictionary<string, string>(StringComparer.Ordinal);
+                        foreach (Row r in g)
+                        {
+                            JObject cell = r.Json?["parameters"]?[param] as JObject;
+                            if (cell == null || cell["read_error"] != null) { unreadable++; continue; }
+                            if (cell.Value<bool?>("exists") == false) { absent++; continue; }
+                            JToken raw = cell["raw"];
+                            if (raw == null || raw.Type == JTokenType.Null ||
+                                (raw.Type != JTokenType.Float && raw.Type != JTokenType.Integer))
+                            { nonNumeric++; continue; }
+                            total += raw.Value<double>(); summed++;
+                            SumSpec seen = null;
+                            if (r.Specs != null) r.Specs.TryGetValue(param, out seen);
+                            quantityBySpec[seen?.Key ?? ""] = seen?.Quantity ?? SumUnitRules.Unknown;
+                        }
+                        DisplayUnitFact display = null;
+                        if (quantityBySpec.Count == 1 && displayUnit != null)
+                        {
+                            string onlyKey = quantityBySpec.Keys.First();
+                            if (!displayCache.TryGetValue(onlyKey, out display))
+                                displayCache[onlyKey] = display = displayUnit(onlyKey);
+                        }
+                        var described = new JObject
+                        {
+                            ["sum"] = total, ["summed"] = summed, ["absent"] = absent,
+                            ["unreadable"] = unreadable, ["non_numeric"] = nonNumeric,
+                            // Explicit, not derivable-if-you-think-about-it: the flag a
+                            // caller can branch on without re-doing the arithmetic.
+                            ["complete"] = summed == g.Count()
+                        };
+                        // WHAT `sum` IS IN. `sum` stays the Revit-internal total it always was;
+                        // beside it, its unit and the converted value (Core/SumUnitRules).
+                        foreach (JProperty unitField in SumUnitRules.Describe(total, summed, quantityBySpec, display).Properties())
+                            described[unitField.Name] = unitField.Value;
+                        sumBlock[param] = described;
+                    }
+                    entry["sums"] = sumBlock;
+                }
+                result.Add(entry);
+            }
+            return result;
+        }
+
+        private static string KeyOf(Row r, string g)
+        {
+            switch (g)
+            {
+                case "category": return r.Category ?? "(no category)";
+                case "level": return r.Level ?? "(no level)";
+                case "type": return r.TypeName ?? "(no type)";
+                case "family": return r.Family ?? "(no family)";
+                case "source_model": return r.SourceModel ?? "(unknown)";
+                case "source_kind": return r.SourceKind ?? "(unknown)";
+                default: return "(unknown key)";   // unreachable: validated at parse
+            }
+        }
+
+        private static JObject Summary(List<Row> rows)
+        {
+            return new JObject
+            {
+                ["by_category"] = Counts(rows, r => r.Category ?? "(no category)"),
+                ["by_level"] = Counts(rows, r => r.Level ?? "(no level)"),
+                ["by_source"] = Counts(rows, r => r.SourceKind + ":" + (r.SourceModel ?? "(unknown)")),
+                // HOW each level was found. "(none)" is the only bucket that means "(no level)".
+                ["by_level_source"] = Counts(rows, r => r.LevelSource ?? LevelResolutionRules.NoSourceLabel)
+            };
+        }
+
+        private static JObject Counts(IEnumerable<Row> rows, Func<Row, string> key)
+            => JsonObjectKey.SummaryCounts(rows.Select(key));
+
+        private static string QueryHash(JObject request)
+        {
+            JObject copy = (JObject)request.DeepClone();
+            copy.Remove("cursor"); copy.Remove("max_rows");
+            copy.Remove("cache_mode"); copy.Remove("include_diagnostics");
+            return RequestFingerprint.Sha256Hex(RequestFingerprint.Canonical(copy));
+        }
+
+        private static string ResultSetHash(IEnumerable<Row> rows) => RequestFingerprint.Sha256Hex(
+            string.Join("\n", rows.Select(r => RequestFingerprint.Canonical(r.Json))));
+
+        private static string MakeCursor(int offset, string queryHash, string setHash) => Convert.ToBase64String(
+            Encoding.UTF8.GetBytes(offset.ToString(CultureInfo.InvariantCulture) + "\n" + queryHash + "\n" + setHash));
+
+        private static bool TryCursor(string cursor, string queryHash, string setHash, out int offset, out string error)
+        {
+            offset = 0; error = null;
+            try
+            {
+                string[] parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('\n');
+                if (parts.Length != 3 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out offset) || offset < 0)
+                    throw new FormatException("cursor payload has the wrong shape");
+                if (parts[1] != queryHash)
+                { error = "The cursor belongs to different query arguments. Re-run without cursor."; return false; }
+                if (parts[2] != setHash)
+                { error = "The model result set changed since the previous page. The cursor is stale; re-run from the first page."; return false; }
+                return true;
+            }
+            catch (Exception ex) { error = "cursor is invalid: " + ex.Message + ". Re-run without cursor."; return false; }
+        }
+
+        private static bool Contains(string have, string want) =>
+            string.IsNullOrWhiteSpace(want) || (have != null && have.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0);
+        private static List<string> Strings(JArray a) => a == null ? new List<string>() :
+            a.Where(x => x.Type == JTokenType.String && !string.IsNullOrWhiteSpace((string)x)).Select(x => (string)x).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        private static string Safe(Func<string> f) { try { return f(); } catch { return null; } }
+        private static JObject Error(string source, long? linkId, long id, string reason) => new JObject
+        { ["source_model"] = source, ["link_instance_id"] = linkId == null ? JValue.CreateNull() : new JValue(linkId.Value), ["element_id"] = id, ["reason"] = reason };
+        private static void AddUnreadable(JArray shown, ref int total, JObject error)
+        { total++; if (shown.Count < 100) shown.Add(error); }
+
+        private sealed class Row
+        {
+            public string TypeName; public string Family;
+            public long Id; public string SourceKind; public string SourceModel; public long? LinkInstanceId;
+            public string Category; public string Level; public JObject Json;
+            /// <summary>Summed parameter -> its spec; null when the query sums nothing.</summary>
+            public Dictionary<string, SumSpec> Specs;
+            /// <summary>Which LevelResolutionRules source named the level; "(none)" when none did.</summary>
+            public string LevelSource;
+        }
+
+        private sealed class Box
+        {
+            public readonly XYZ Min, Max;
+            public Box(XYZ min, XYZ max) { Min = min; Max = max; }
+            public bool Intersects(Box other) =>
+                Min.X <= other.Max.X && Max.X >= other.Min.X &&
+                Min.Y <= other.Max.Y && Max.Y >= other.Min.Y &&
+                Min.Z <= other.Max.Z && Max.Z >= other.Min.Z;
+        }
+    }
+}

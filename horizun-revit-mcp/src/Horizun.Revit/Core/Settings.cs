@@ -1,0 +1,758 @@
+// -----------------------------------------------------------------------------
+// Horizun MCP - original Horizun code.
+//
+// The few things that must be switched on deliberately.
+//
+// Read by BOTH halves: the server decides whether a tool is even advertised, the
+// add-in decides whether it will run. Two checks, not one - the server and the
+// plugin ship separately, so a stale server must not be able to enable something
+// the machine's owner turned off, and a client that calls a tool it never saw in
+// tools/list must still be refused at the far end.
+//
+// Deliberately dull: a JSON file the owner can read and edit in Notepad, at
+//
+//     %USERPROFILE%\.horizun\settings.json
+//
+// The location comes from HorizunPaths, which BOTH halves share. It used to be
+// computed here from LocalApplicationData and again in six other places; see
+// HorizunPaths.cs for why a per-process environment variable is the wrong root
+// for state two processes must agree on.
+//
+// It is re-read on every use rather than cached, so switching something off takes
+// effect on the next call instead of the next Revit restart. That matters most
+// for the one setting that exists today: arbitrary code execution.
+//
+// THE DEFAULTS ARE SAFE FOR AN UNATTENDED AGENT. A fresh install permits typed
+// writes inside the active document, but it cannot open/close documents, write
+// external files or execute arbitrary code: an absent file, or a file without
+// these keys, reads as permission_profile=safe_write and
+// enable_execute_python=false. Elevation is always an explicit owner decision.
+//
+// One asymmetry is deliberate: a file that EXISTS but cannot be parsed falls
+// CLOSED (read_only, Python off), not open. The owner may have written an
+// explicit restriction into that file, and a corrupted byte must never convert
+// "I turned this off" into "everything is enabled".
+//
+// WHAT EACH PROFILE MEANS. The ladder is cumulative, and each rung is decided by
+// ToolEffect rather than by a list of tool names - a list is what let an
+// externally-effecting tool be admitted by a profile that forbids external
+// effects, because the tool was added to the enum and not to the list:
+//
+//   read_only    reads, and steers the host (which Revit answers, what is
+//                selected). It does not change the model, does not open or close
+//                a document session, and writes NOTHING outside the model.
+//   safe_write   the above, plus typed writes INSIDE the document.
+//   full_write   the above, plus document sessions and typed external writes.
+//   unsafe_code  the above, plus eligibility for horizun_execute_python. It is
+//                never the implicit default.
+//
+// ToolEffect.HostState is why read_only still admits something that is not a
+// pure read: horizun_target chooses WHICH Revit every later call talks to, and a
+// read-only machine that cannot choose its Revit cannot read. It used to share a
+// classification with the workbook writer, and refusing the whole bucket would
+// have broken the profile this fix exists to protect.
+//
+// ToolEffect.ExternalSideEffectOnRequest is the same shape of correction one
+// level finer. horizun_budget_compare CAN create a workbook and CAN push a Power
+// BI table, and both really do need full_write - but a call with no `outputs`
+// does neither, and hiding the whole tool refused a read_only machine the
+// arithmetic because the same surface can also write. Admission is by effect, as
+// everything here is; THE DESTINATION is decided per call by
+// AllowsExternalSideEffect below, which the handler must consult before it
+// touches a destination. Two halves, and the tool is only honest with both.
+//
+// The matrix is asserted for every profile against every ToolEffect value in
+// SettingsEffectMatrixTests, so a new effect nobody classified fails a test
+// instead of quietly inheriting whichever branch happens to miss it.
+// -----------------------------------------------------------------------------
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+using System.Threading;
+using System.Linq;
+using Horizun.Contracts;
+using Newtonsoft.Json.Linq;
+
+namespace Horizun.Revit.Core
+{
+    public static class Settings
+    {
+        private static readonly object WriteLock = new object();
+
+        public static string Path()
+        {
+            return HorizunPaths.SettingsPath();
+        }
+
+        /// <summary>
+        /// Is horizun_execute_python allowed to run? Default FALSE.
+        ///
+        /// It runs arbitrary code inside Revit, on the UI thread, with full API access
+        /// and the rights of the signed-in user. Enabling it requires an explicit true
+        /// AND permission_profile=unsafe_code. An absent or non-boolean key means OFF.
+        /// The Revit ribbon writes a separate persistent UI grant which authorizes only
+        /// this tool and does not silently elevate the rest of permission_profile.
+        /// A legacy execute_python_ui_grant_until_utc is still honoured until its old
+        /// expiry so an in-place upgrade never revokes an already-approved running batch.
+        /// </summary>
+        public static bool ExecutePythonEnabled
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                if (state == FileState.Malformed) return false;
+                if (TemporaryExecutePythonGrant(o, DateTimeOffset.UtcNow, out _)) return true;
+                JToken ui = o?["execute_python_ui_granted"];
+                if (ui != null && ui.Type == JTokenType.Boolean && (bool)ui) return true;
+                JToken t = o?["enable_execute_python"];
+                return t != null && t.Type == JTokenType.Boolean && (bool)t;
+            }
+        }
+
+        /// <summary>
+        /// Legacy bounded grant written by versions before the ribbon became a persistent
+        /// owner switch. New code never creates this key; it is read only for a safe
+        /// in-place upgrade and removed by either ON or OFF.
+        /// </summary>
+        public static DateTimeOffset? ExecutePythonTemporaryGrantUntilUtc
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                if (state == FileState.Malformed) return null;
+                return TemporaryExecutePythonGrant(o, DateTimeOffset.UtcNow, out DateTimeOffset until)
+                    ? (DateTimeOffset?)until : null;
+            }
+        }
+
+        /// <summary>read_only | safe_write (default) | full_write | unsafe_code.</summary>
+        public static string PermissionProfile
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                return ProfileFrom(o, state);
+            }
+        }
+
+        /// <summary>
+        /// Local emergency pause for MCP work. This is separate from read_only:
+        /// read_only still permits audits, whereas a pause hides and refuses every
+        /// tool except health so an operator can establish that the bridge is paused.
+        /// Only the local Revit ribbon writes it.
+        /// </summary>
+        public static bool McpPaused
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                return state != FileState.Malformed && o?["mcp_paused"]?.Type == JTokenType.Boolean &&
+                       (bool)o["mcp_paused"];
+            }
+        }
+
+        public static bool TrySetMcpPaused(bool paused, out string error)
+        {
+            return TryUpdate(o =>
+            {
+                o["mcp_paused"] = paused;
+                o["mcp_paused_changed_from_revit_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// Optional local policy for shared models. When enabled, a workshared or
+        /// unreadable workshared state is treated as audit-only for every operation
+        /// that could write. A dry run remains allowed because it commits nothing.
+        /// </summary>
+        public static bool ForceReadOnlyOnWorkshared
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                return state != FileState.Malformed && o?["force_read_only_on_workshared"]?.Type == JTokenType.Boolean &&
+                       (bool)o["force_read_only_on_workshared"];
+            }
+        }
+
+        public static bool TrySetForceReadOnlyOnWorkshared(bool enabled, out string error)
+        {
+            return TryUpdate(o =>
+            {
+                o["force_read_only_on_workshared"] = enabled;
+                o["force_read_only_on_workshared_changed_from_revit_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// May horizun_document_session synchronize a workshared model with its central?
+        /// OFF unless the machine owner said yes from Revit's Advanced options, gated like
+        /// execute_python: a sync publishes into a file other people work from and has no
+        /// rollback. Only an explicit boolean true counts; a malformed file falls closed.
+        /// No MCP call writes this key.
+        /// </summary>
+        public static bool SyncWithCentralOwnerEnabled
+        {
+            get
+            {
+                FileState state;
+                JObject o = Read(out state);
+                return state != FileState.Malformed && o?["sync_with_central_owner_granted"]?.Type == JTokenType.Boolean &&
+                       (bool)o["sync_with_central_owner_granted"];
+            }
+        }
+
+        /// <summary>Written only by the ribbon's owner dialog (SyncCentralPermissionCommand).</summary>
+        public static bool TrySetSyncWithCentralOwnerGrant(bool enabled, out string error)
+        {
+            return TryUpdate(o =>
+            {
+                o["sync_with_central_owner_granted"] = enabled;
+                o["sync_with_central_owner_changed_from_revit_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// Persist an owner-selected typed-tool permission rung. This is deliberately
+        /// exposed only to the local Revit ribbon: an MCP request must never be able
+        /// to make itself more capable. Python remains separately owner-gated.
+        /// </summary>
+        public static bool TrySetPermissionProfile(string profile, out string error)
+        {
+            error = null;
+            if (profile != "read_only" && profile != "safe_write" && profile != "full_write")
+            {
+                error = "Only read_only, safe_write and full_write may be selected from Revit. " +
+                        "unsafe_code is an administrator-only profile.";
+                return false;
+            }
+
+            return TryUpdate(o =>
+            {
+                o["permission_profile"] = profile;
+                o["permission_profile_selected_from_revit_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// MAY THIS CALL REACH OUTSIDE THE MODEL? The rung, asked directly.
+        ///
+        /// IsToolAllowed answers about a TOOL and is consulted once, for advertisement
+        /// and for dispatch. This answers about the OPERATION a call has asked for, and
+        /// is the second half of ToolEffect.ExternalSideEffectOnRequest: a handler
+        /// carrying that effect calls this before it opens a destination, and refuses
+        /// with the sentence returned here. Same two rungs full_write authorizes, decided
+        /// in one place rather than restated in each handler.
+        ///
+        /// It is deliberately NOT about a tool name: the question is what this machine
+        /// permits, and the answer must be the same for the next handler that asks.
+        /// </summary>
+        public static bool AllowsExternalSideEffect(out string reason)
+        {
+            string profile = PermissionProfile;
+            if (profile == "full_write" || profile == "unsafe_code") { reason = null; return true; }
+            reason = "permission_profile=" + profile + " in " + Path() + " does not authorize writing outside the " +
+                     "model. Only full_write and unsafe_code do. Nothing was written, and this machine's owner is " +
+                     "the only person who changes that file.";
+            return false;
+        }
+
+        public static bool IsToolAllowed(CommandContract contract, out string reason)
+            => IsToolAllowed(contract, out reason, ignoreToolPacks: false);
+
+        /// <summary>
+        /// The same admission decision with the tool-pack restriction lifted, and ONLY
+        /// that one. Everything else - denied_tools, the allowlist, the pause, the
+        /// permission profile, the Python grant - still applies.
+        ///
+        /// It exists for one purpose: measuring what the pack selection costs and saves
+        /// (Protocol/DiscoveryCost.cs). A baseline that also lifted the permission
+        /// profile would credit the packs with a saving the owner's read_only setting
+        /// made, which is how a measured percentage becomes a flattering one.
+        ///
+        /// NOTHING DISPATCHES THROUGH THIS. It answers a question about the
+        /// configuration; it never decides whether a call may run.
+        /// </summary>
+        public static bool IsToolAllowedIgnoringPacks(CommandContract contract, out string reason)
+            => IsToolAllowed(contract, out reason, ignoreToolPacks: true);
+
+        private static bool IsToolAllowed(CommandContract contract, out string reason, bool ignoreToolPacks)
+        {
+            reason = null;
+            if (contract == null) { reason = "Unknown tool contract."; return false; }
+            if (McpPaused && contract.Name != "horizun_health")
+            {
+                reason = contract.Name + " is hidden/refused because MCP is paused by the local Revit owner. " +
+                         "Only horizun_health remains available to report that state; resume from the Revit ribbon.";
+                return false;
+            }
+            // ONE read decides the whole admission, so the profile and the reason given for
+            // it come from the same bytes (a second read could disagree with the first).
+            JObject settings = Read(out FileState settingsState, out string settingsFailure);
+            string fellClosed = settingsState == FileState.Malformed
+                ? " (" + Path() + " did not decide this: " + settingsFailure + ". An unreadable or malformed " +
+                  "choice never elevates, so read_only applies whatever the file says; retry once the file reads.)"
+                : "";
+            HashSet<string> denied = Strings(settings?["denied_tools"] as JArray);
+            HashSet<string> allowed = Strings(settings?["allowed_tools"] as JArray);
+            if (denied.Contains(contract.Name))
+            { reason = contract.Name + " is disabled by denied_tools in " + Path() + "."; return false; }
+            if (allowed.Count > 0 && !allowed.Contains(contract.Name))
+            { reason = contract.Name + " is outside the allowed_tools allowlist in " + Path() + "."; return false; }
+
+            // ---- tool packs: which tools this SESSION is about. -------------------
+            // Enforced here, in the one place both advertisement and dispatch already
+            // consult, so hidden means unreachable on every path - sync, async, submit
+            // and execute_plan's children alike. Core tools never fall to this check;
+            // ActivePackResolution welds them on even over a malformed selection.
+            if (!ignoreToolPacks)
+            {
+                ToolPacks.Resolution packs = ActivePackResolution(settings);
+                if (packs.Restricting && !packs.Tools().Contains(contract.Name))
+                { reason = ToolPacks.HiddenReason(contract.Name, packs); return false; }
+            }
+
+            string profile = ProfileFrom(settings, settingsState);
+            JToken persistentUiToken = settings?["execute_python_ui_granted"];
+            bool persistentUiGrant = persistentUiToken != null &&
+                                     persistentUiToken.Type == JTokenType.Boolean &&
+                                     (bool)persistentUiToken;
+            bool humanPythonGrant = contract.Name == "horizun_execute_python" &&
+                                    profile != "read_only" &&
+                                    (persistentUiGrant || ExecutePythonTemporaryGrantUntilUtc != null);
+
+            // ExternalSideEffect is consulted by BOTH restrictive profiles, and that is
+            // the fix rather than a detail. The classification exists precisely to mean
+            // "this reaches outside the model", and neither profile used to ask about it
+            // - so every tool carrying it was admitted by both. horizun_excel_write_rows
+            // is one: a machine set to read_only refused to move a wall and then rewrote
+            // a workbook on disk. Deciding on the ENUM rather than on a list of names is
+            // what keeps the next externally-effecting tool from repeating it.
+            // horizun_code_check is classified MutatingUnlessDryRun for its ONE write
+            // (operation=travel_distance with travel.create_paths), but its check and its
+            // measurement write nothing. Hiding it from read_only took a pure read away, so it
+            // stays listed and the command itself refuses create_paths under read_only.
+            bool writesOnlyOnRequest = contract.Name == "horizun_code_check";
+            if (!humanPythonGrant && profile == "read_only" && !writesOnlyOnRequest &&
+                (contract.Effect == ToolEffect.Mutating || contract.Effect == ToolEffect.MutatingUnlessDryRun ||
+                 contract.Effect == ToolEffect.DocumentSession || contract.Effect == ToolEffect.ExternalSideEffect))
+            {
+                reason = contract.Name + " is hidden/refused by permission_profile=read_only in " + Path() +
+                         ": read_only changes nothing - not the model, not the document session, and nothing " +
+                         "written outside it." + fellClosed;
+                return false;
+            }
+            if (!humanPythonGrant && profile == "safe_write" &&
+                (contract.Effect == ToolEffect.DocumentSession || contract.Effect == ToolEffect.ExternalSideEffect ||
+                 // Named as well as classified: these write outside the model while being
+                 // classified MutatingUnlessDryRun, so the effect alone does not catch them.
+                 contract.Name == "horizun_open_document" || contract.Name == "horizun_save_document" ||
+                 contract.Name == "horizun_relinquish_all" || contract.Name == "horizun_export" ||
+                 contract.Name == "horizun_deliver_ifc" ||
+                 contract.Name == "horizun_power_bi_push" || contract.Name == "horizun_create_family"))
+            {
+                reason = contract.Name + " changes the Revit document session or writes external files and is " +
+                         "hidden/refused by permission_profile=safe_write in " + Path() +
+                         ". safe_write permits typed writes INSIDE the document only. Use full_write only on " +
+                         "machines authorized for those side effects.";
+                return false;
+            }
+            if (contract.Name == "horizun_execute_python" &&
+                (!humanPythonGrant &&
+                 (profile != "unsafe_code" || !ExecutePythonEnabled)))
+            {
+                reason = "horizun_execute_python requires explicit permission_profile=unsafe_code and " +
+                         "enable_execute_python=true in " + Path() + ", OR a persistent owner grant made from " +
+                         "Revit's Python ON/OFF button. It is OFF on a fresh install. Only the machine's owner " +
+                         "may grant that privilege, and it remains OFF until that owner does so." + fellClosed;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// The resolved tool-pack selection, from the environment override or the
+        /// settings file. Public so health can publish the profile a session is
+        /// actually running and the UI can show it; the OPTIONAL settings argument
+        /// spares a second file read on the IsToolAllowed hot path.
+        /// </summary>
+        /// <remarks>
+        /// TWO SPELLINGS, ONE SELECTION. HORIZUN_TOOLSETS and the "toolsets" key are the
+        /// names MCP clients use for the same thing; each is read only when its pack
+        /// spelling is absent, so a machine that already configured tool_packs keeps
+        /// exactly the behaviour it had, and the resolution says which spelling decided.
+        /// </remarks>
+        public static ToolPacks.Resolution ActivePackResolution(JObject settings = null)
+        {
+            string envName = ToolPacks.EnvironmentOverride;
+            string env = null;
+            try
+            {
+                env = Environment.GetEnvironmentVariable(ToolPacks.EnvironmentOverride);
+                if (string.IsNullOrWhiteSpace(env))
+                {
+                    env = Environment.GetEnvironmentVariable(ToolPacks.ToolsetsEnvironmentVariable);
+                    envName = ToolPacks.ToolsetsEnvironmentVariable;
+                }
+            }
+            catch { env = null; }
+
+            FileState state;
+            JObject o = settings ?? Read(out state);
+            string key = ToolPacks.SettingsKey;
+            JToken raw = o?[ToolPacks.SettingsKey];
+            if (raw == null)
+            {
+                raw = o?[ToolPacks.ToolsetsSettingsKey];
+                key = ToolPacks.ToolsetsSettingsKey;
+            }
+
+            ToolPacks.Resolution r;
+            if (raw == null) r = ToolPacks.Resolve(env, null, settingsValueMalformed: false);
+            else
+            {
+                var array = raw as JArray;
+                r = array == null || array.Any(t => t.Type != JTokenType.String)
+                    ? ToolPacks.Resolve(env, null, settingsValueMalformed: true)
+                    : ToolPacks.Resolve(env, array.Select(t => (string)t), settingsValueMalformed: false);
+            }
+            if (!string.IsNullOrWhiteSpace(env)) r.SourceName = envName;
+            else if (raw != null) r.SourceName = key;
+            return r;
+        }
+
+        /// <summary>
+        /// Persist the user's pack selection. Null or empty restores the default
+        /// (every pack). The same guarded read-modify-write as every settings change;
+        /// the ToolListMonitor sees the file move and compatible clients get
+        /// tools/list_changed without a restart.
+        /// </summary>
+        public static bool TrySetToolPacks(IEnumerable<string> packs, out string error)
+        {
+            List<string> list = packs?.Select(p => (p ?? "").Trim().ToLowerInvariant())
+                                      .Where(p => p.Length > 0).Distinct().ToList();
+            if (list != null && list.Count > 0)
+            {
+                // Refuse garbage BEFORE writing it: a settings file with an unknown pack
+                // falls closed to core-only, which is safe and also nothing the user
+                // asked to happen.
+                var unknown = list.Where(p => p != ToolPacks.AllToken &&
+                                              !ToolPacks.KnownPacks.Contains(p)).ToList();
+                if (unknown.Count > 0)
+                {
+                    error = "unknown pack name(s): " + string.Join(", ", unknown) + ". Known: " +
+                            string.Join(", ", ToolPacks.KnownPacks.OrderBy(k => k, StringComparer.Ordinal)) +
+                            ". Nothing was changed.";
+                    return false;
+                }
+            }
+            return TryUpdate(o =>
+            {
+                if (list == null || list.Count == 0 ||
+                    (list.Count == 1 && list[0] == ToolPacks.AllToken)) o.Remove(ToolPacks.SettingsKey);
+                else o[ToolPacks.SettingsKey] = new JArray(list);
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// The sentence to show a caller who asked for a capability this machine has
+        /// switched off: what is off, why it is off, and where the owner turns it back on.
+        /// </summary>
+        public static string ExecutePythonRefusal()
+        {
+            return "horizun_execute_python is DISABLED ON THIS MACHINE. This is the safe default: arbitrary " +
+                   "code requires explicit owner consent in " + Path() + ". Respect the choice: do not edit the " +
+                   "file yourself. If the MACHINE'S OWNER needs the developer escape hatch, they can grant a " +
+                   "persistent opt-in from Revit's Python ON/OFF button or with " +
+                   "scripts/enable-execute-python.ps1; -Disable revokes it. " +
+                   "The add-in re-reads settings on every call, and the server announces a standard " +
+                   "tools/list_changed notification. If a client does not implement that notification, restart " +
+                   "it once for the tool to appear. Meanwhile, use typed commands: they cover most operations " +
+                   "and verify their work.";
+        }
+
+        /// <summary>
+        /// Grant arbitrary Python from an explicit human action inside Revit. This is a
+        /// durable owner switch and remains enabled until that same Windows user revokes
+        /// it. It authorizes only execute_python; it deliberately does not elevate the
+        /// underlying profile or enable other external/session tools. The old expiring UI
+        /// key is removed so there is one unambiguous source of truth after the decision.
+        /// </summary>
+        public static bool TryGrantExecutePythonPersistently(out string error)
+        {
+            return TryUpdate(o =>
+            {
+                o["execute_python_ui_granted"] = true;
+                o["execute_python_ui_granted_at_utc"] = DateTimeOffset.UtcNow.ToString("O");
+                o.Remove("execute_python_ui_grant_until_utc");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// The Revit OFF button is an emergency stop, not merely expiry cleanup: it
+        /// revokes both the temporary UI grant and any durable enable flag. It leaves
+        /// the permission profile unchanged because an administrator may still need
+        /// full_write for typed external operations.
+        /// </summary>
+        public static bool TryRevokeExecutePython(out string error)
+        {
+            return TryUpdate(o =>
+            {
+                o["enable_execute_python"] = false;
+                o.Remove("execute_python_ui_granted");
+                o.Remove("execute_python_ui_grant_until_utc");
+                o.Remove("execute_python_ui_granted_at_utc");
+                return true;
+            }, out error);
+        }
+
+        /// <summary>
+        /// One raw string setting, for callers that take an injected reader (the receipt
+        /// ledger's retention). Guarded like every read of a file the user owns.
+        /// </summary>
+        public static string RawValue(string key)
+        {
+            try { return Read()?.Value<string>(key); } catch { return null; }
+        }
+
+        /// <summary>
+        /// Raw retention setting with malformed-file provenance preserved. Returning
+        /// null means the owner never selected this key and bounded defaults may apply;
+        /// an unreadable settings file returns a deliberately invalid value so retention
+        /// fails closed instead of mistaking corruption for absence and deleting data.
+        /// </summary>
+        public static string RetentionValue(string key)
+        {
+            FileState state;
+            JObject o = Read(out state);
+            return state == FileState.Malformed ? "invalid-settings-file" : o?.Value<string>(key);
+        }
+
+        /// <summary>
+        /// Three states, because two of them look identical and must not act identical:
+        /// an ABSENT file means "the owner never chose" and the defaults apply, while a
+        /// MALFORMED file may be a corrupted explicit choice and everything falls closed.
+        /// </summary>
+        private enum FileState { Absent, Readable, Malformed }
+
+        private static JObject Read(out FileState state) => Read(out state, out string ignored);
+
+        // A SHARING VIOLATION IS NOT A CHOICE. MEASURED 2026-09-26: a call refused as
+        // "permission_profile=read_only in settings.json" while the file said unsafe_code
+        // before and after - the read had failed for an instant, fell closed (right), and
+        // the refusal then claimed the file SAID read_only (wrong). An I/O failure is
+        // retried briefly; one that persists still falls closed, and 'failure' names it so
+        // no refusal attributes to the owner a setting the owner never wrote.
+        private static JObject Read(out FileState state, out string failure)
+        {
+            failure = null;
+            string p = Path();
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (!File.Exists(p)) { state = FileState.Absent; return new JObject(); }
+                    string text = File.ReadAllText(p);
+                    try { JObject o = JObject.Parse(text); state = FileState.Readable; return o; }
+                    catch (Exception parse)
+                    {
+                        state = FileState.Malformed;
+                        failure = "it is not valid JSON (" + parse.Message + ")";
+                        return new JObject();
+                    }
+                }
+                catch (Exception io) when (io is IOException || io is UnauthorizedAccessException)
+                {
+                    if (attempt < 5) { System.Threading.Thread.Sleep(40); continue; }
+                    state = FileState.Malformed;
+                    failure = "it could not be read after " + attempt + " attempts (" + io.GetType().Name + ": " + io.Message + ")";
+                    return new JObject();
+                }
+                catch (Exception other)
+                {
+                    state = FileState.Malformed;
+                    failure = "it could not be read (" + other.GetType().Name + ": " + other.Message + ")";
+                    return new JObject();
+                }
+            }
+        }
+
+        /// <summary>The profile one read of the file decides, and why when it fell closed.</summary>
+        private static string ProfileFrom(JObject o, FileState state)
+        {
+            if (state == FileState.Malformed) return "read_only"; // an unreadable choice never elevates
+            string p = o?.Value<string>("permission_profile");
+            if (string.IsNullOrWhiteSpace(p)) return "safe_write";
+            p = p.ToLowerInvariant();
+            return p == "read_only" || p == "safe_write" || p == "full_write" || p == "unsafe_code"
+                ? p : "read_only"; // malformed privilege never elevates
+        }
+
+        private static JObject Read()
+        {
+            FileState ignored;
+            return Read(out ignored);
+        }
+
+        private static bool TemporaryExecutePythonGrant(
+            JObject settings, DateTimeOffset nowUtc, out DateTimeOffset untilUtc)
+        {
+            untilUtc = default(DateTimeOffset);
+            JToken t = settings?["execute_python_ui_grant_until_utc"];
+            if (t == null) return false;
+            if (t.Type == JTokenType.Date)
+            {
+                object value = ((JValue)t).Value;
+                if (value is DateTimeOffset dto) untilUtc = dto;
+                else if (value is DateTime dt)
+                {
+                    if (dt.Kind == DateTimeKind.Unspecified)
+                        dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                    untilUtc = new DateTimeOffset(dt.ToUniversalTime());
+                }
+                else return false;
+                return untilUtc.ToUniversalTime() > nowUtc.ToUniversalTime();
+            }
+            if (t.Type != JTokenType.String) return false;
+            if (!DateTimeOffset.TryParse(
+                    (string)t,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal |
+                    System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out untilUtc)) return false;
+            return untilUtc > nowUtc;
+        }
+
+        private static bool TryUpdate(Func<JObject, bool> update, out string error)
+        {
+            error = null;
+            lock (WriteLock)
+            {
+                using (var mutex = new Mutex(false, "Local\\Horizun.Revit.Settings.V1"))
+                {
+                    bool held = false;
+                    try
+                    {
+                        try { held = mutex.WaitOne(TimeSpan.FromSeconds(15)); }
+                        catch (AbandonedMutexException) { held = true; }
+                        if (!held)
+                        {
+                            error = "Timed out waiting for another Revit process to finish updating settings.json. Nothing changed.";
+                            return false;
+                        }
+                        return TryUpdateLocked(update, out error);
+                    }
+                    catch (Exception ex)
+                    {
+                        error = "Could not acquire the cross-process settings lock: " + ex.Message;
+                        return false;
+                    }
+                    finally { if (held) try { mutex.ReleaseMutex(); } catch { } }
+                }
+            }
+        }
+
+        private static bool TryUpdateLocked(Func<JObject, bool> update, out string error)
+        {
+            error = null;
+            string path = Path();
+            string temp = null;
+            try
+            {
+                JObject settings;
+                string originalRaw = null;
+                bool originallyExisted = File.Exists(path);
+                if (originallyExisted)
+                {
+                    originalRaw = File.ReadAllText(path);
+                    try { settings = JObject.Parse(originalRaw); }
+                    catch
+                    {
+                        error = "settings.json is malformed. It remains fail-closed and was not overwritten: " + path;
+                        return false;
+                    }
+                }
+                else settings = new JObject();
+
+                if (!update(settings))
+                {
+                    error = "The requested settings update was refused.";
+                    return false;
+                }
+
+                string directory = System.IO.Path.GetDirectoryName(path);
+                if (string.IsNullOrWhiteSpace(directory))
+                {
+                    error = "The settings path has no parent directory: " + path;
+                    return false;
+                }
+                Directory.CreateDirectory(directory);
+                temp = System.IO.Path.Combine(directory, ".settings-" + Guid.NewGuid().ToString("N") + ".tmp");
+                File.WriteAllText(temp, settings.ToString(Newtonsoft.Json.Formatting.Indented), new UTF8Encoding(false));
+
+                // Non-cooperating editors do not take our named mutex. Refuse their
+                // concurrent change instead of restoring an older privilege snapshot.
+                bool existsNow = File.Exists(path);
+                if (existsNow != originallyExisted ||
+                    (existsNow && !string.Equals(File.ReadAllText(path), originalRaw, StringComparison.Ordinal)))
+                {
+                    error = "settings.json changed while the Revit permission dialog was open. Nothing was overwritten; try again.";
+                    return false;
+                }
+
+                if (existsNow)
+                {
+                    string backup = path + ".horizun-ui-bak-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff") +
+                                    "-" + Guid.NewGuid().ToString("N");
+                    File.Replace(temp, path, backup);
+                    PruneUiBackups(directory, System.IO.Path.GetFileName(path));
+                }
+                else File.Move(temp, path);
+                temp = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "Could not update " + path + ": " + ex.Message;
+                return false;
+            }
+            finally
+            {
+                if (temp != null) try { File.Delete(temp); } catch { }
+            }
+        }
+
+        private static void PruneUiBackups(string directory, string settingsFileName)
+        {
+            try
+            {
+                var backups = new DirectoryInfo(directory)
+                    .GetFiles(settingsFileName + ".horizun-ui-bak-*");
+                Array.Sort(backups, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+                for (int i = 3; i < backups.Length; i++)
+                    try { backups[i].Delete(); } catch { }
+            }
+            catch { /* backup retention must never turn a successful revoke into failure */ }
+        }
+
+        private static HashSet<string> Strings(JArray a)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (a != null) foreach (JToken t in a)
+                if (t.Type == JTokenType.String && !string.IsNullOrWhiteSpace((string)t)) result.Add((string)t);
+            return result;
+        }
+    }
+}

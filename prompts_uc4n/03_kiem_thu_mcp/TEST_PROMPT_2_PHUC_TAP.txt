@@ -1,0 +1,40 @@
+BÀI TEST 2 — YÊU CẦU PHỨC TẠP, CÓ THAM SỐ CỤ THỂ
+
+Hãy hoàn thành bản vẽ mặt bằng phòng 2D sau bằng U-C4N AutoCAD MCP Pro trong một yêu cầu/phương án liên tục, không chia thành các giai đoạn và không dừng để yêu cầu tôi gửi prompt tiếp theo. Hãy tạo bản vẽ mới, thực hiện các thao tác cần thiết theo thứ tự phụ thuộc, rồi kiểm tra kết quả. Dùng các tool có trong catalog và đúng inputSchema; không dùng placeholder, không đoán kết quả của thao tác chưa chạy, không báo đã thực thi khi mới chỉ lập phương án. Nếu hệ thống thực tế không cho phép hoàn thành toàn bộ trong một lần, hãy thực hiện phần hợp lệ có thể làm trong lần này và nêu chính xác giới hạn/tool còn thiếu, không tự bịa kết quả.
+
+Trước khi vẽ, dùng drawing_new tạo bản vẽ mới. Sau đó dùng system_set_variable với name="INSUNITS", value=4 để đặt đơn vị millimet và system_get_variable với name="INSUNITS" để xác nhận giá trị 4. Chỉ tiếp tục dựng hình học nếu kết quả đọc lại xác nhận đơn vị.
+
+Dựng tường, cửa đi và cửa sổ bằng arch_plan_from_spec với spec sau:
+
+{
+  "lang": "en",
+  "poche": false,
+  "walls": [{
+    "id": "EXT",
+    "axis": [[0,0],[6000,0],[6000,4000],[0,4000]],
+    "thickness": 200,
+    "justification": "right",
+    "closed": true
+  }],
+  "openings": [
+    {"id":"D1","wall":"EXT","kind":"door","offset":2550,"width":900,"swing":"in","hand":"right"},
+    {"id":"W1","wall":"EXT","kind":"window","offset":12250,"width":1500}
+  ]
+}
+
+Các quy ước dưới đây đã được đối chiếu với mã nguồn U-C4N 1.6 trên máy: tọa độ, thickness, width và offset tính bằng millimet; justification hợp lệ là center/left/right; right đặt toàn bộ tường bên phải hướng axis. Axis trên đi ngược chiều kim đồng hồ, phần trong nằm bên trái axis, nên justification="right" đặt tường ra ngoài và giữ thông thủy 6000 × 4000. Offset là khoảng cách tích lũy từ đầu axis đến mép đầu lỗ mở: cửa dưới ở giữa tại 2550..3450; cửa sổ trên đi theo axis từ phải sang trái, offset=12250 đặt cửa ở giữa cạnh trên, từ x=3750 đến x=2250. swing="in" mở bên trái khi nhìn dọc axis; với chu vi ngược chiều kim đồng hồ, đó là phía trong phòng. Tool vẽ cửa mở 90°. Hand được xác định từ phía cửa mở tới khi nhìn về tường; ở cửa dưới, hand="right" cho bản lề bên trái khi nhìn từ ngoài vào. Để trống material để dùng mặc định. Nguồn quy ước: engineering/arch/walls.py (face_offsets), engineering/arch/model.py (segment_of), engineering/arch/openings.py (opening_prims). Đây là quy ước theo mã nguồn đã kiểm tra, không khẳng định hình học đã được xác minh ở lần chạy này. Hãy dùng đúng spec, không hỏi lại để chọn quy ước; chỉ hỏi nếu inputSchema thực tế mâu thuẫn cụ thể với spec. Dùng layer kiến trúc mặc định; không yêu cầu ánh xạ layer tùy chỉnh. Kiểm tra omitted và lỗi; nếu opening bị omitted thì không báo là đã tạo.
+
+Trên cùng bản vẽ, thêm nhãn nguyên văn “PHÒNG TEST — 24 m²” gần tâm bằng entity_create_text tại (3000,2000), height=150, rotation=0. Không bắt buộc căn giữa.
+
+Tạo các kích thước bằng dimension_linear, dùng layer A-DIMEN-T-N nếu catalog có tool thực tế để tạo/chọn layer; nếu không, dùng layer mặc định và báo layer thực tế. Tạo các kích thước sau:
+1. Ngang thông thủy: (0,0) đến (6000,0), đường kích thước tại (3000,-700), rotation=0.
+2. Dọc thông thủy: (0,0) đến (0,4000), đường kích thước tại (-700,2000), rotation=90.
+3. Chiều dày tường dưới: (1000,-200) đến (1000,0), đường kích thước tại (700,-100), rotation=90.
+4. Cửa đi: (2550,0) đến (3450,0), đường kích thước tại (3000,-400), rotation=0.
+5. Cửa sổ: (2250,4000) đến (3750,4000), đường kích thước tại (3000,4500), rotation=0.
+
+Giá trị dự kiến lần lượt là 6000, 4000, 200, 900 và 1500 mm. Chỉ tạo kích thước chưa có; nếu schema hoặc tool không hỗ trợ mục nào, nêu rõ mục đó. Không thay kích thước thông thủy bằng kích thước phủ bì.
+
+Sau khi tạo, đọc lại hình học, nhãn, kích thước và layer bằng các tool có trong catalog. Xác nhận thông thủy 6000 × 4000, tường dày 200 mm hướng ra ngoài, vị trí/kích thước hai lỗ mở, và cửa đi mở vào phòng 90° với bản lề đúng phía. Nếu có tool đọc phòng/hình học, xác minh diện tích thực đo 24 m²; không xem nhãn tự gõ là bằng chứng diện tích. Kiểm tra layer thực tế cùng mọi cảnh báo/omitted, và nêu rõ phần nào chưa thể xác minh. Dùng view_zoom_extents nếu có. Không xuất file.
+
+Báo cáo ngắn gọn những thao tác đã thực thi và kết quả đọc lại; phân biệt rõ phần thành công, phần bị bỏ qua/thất bại và phần chưa xác minh. Không tuyên bố thành công cho thao tác chỉ mới được đề xuất.

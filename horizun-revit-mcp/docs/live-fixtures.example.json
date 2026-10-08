@@ -1,0 +1,115 @@
+{
+  "_README": [
+    "Copy this to %USERPROFILE%\\.horizun\\live-fixtures.json and fill it in with REAL",
+    "values for this machine. scripts/verify-live.ps1 reads it; an explicit -Parameter",
+    "always wins over the file.",
+    "",
+    "WHY IT LIVES OUTSIDE THE REPOSITORY. Every value here names something real - a",
+    "model title, a shared-parameter file, a project folder. Committing them, or",
+    "putting them in CI variables, republishes exactly the client and project names",
+    "that this policy exists to keep out. The file the release gate reads",
+    "must not be the file that leaks what it is checking.",
+    "",
+    "A value left blank makes its probes NOT COVERED - named in the output, and under",
+    "-ReleaseGate a non-zero exit. That is the intended behaviour: a guarantee missing",
+    "from the output reads exactly like one that passed."
+  ],
+
+  "_PointCloudPath": "Full path to a SMALL .rcp or .rcs this machine can read, for the links-survey probes (add kind=point_cloud, scan_deviation). Blank: those cases are NOT COVERED, named.",
+  "PointCloudPath": "",
+
+  "_PointCloudFloor": "Optional, with PointCloudPath: a horizontal floor the scan really covers, in the cloud's coordinates as linked at the origin - {\"min_xy\": [x, y], \"max_xy\": [x, y], \"z\": z} in mm. The probe stages a floor there and scan_deviation must MEASURE its top face. Blank: that positive case is NOT COVERED.",
+  "PointCloudFloor": null,
+
+  "_IfcLinkSource": "Optional full path to a disposable .ifc for add kind=ifc (copied to scratch before linking). Blank: the probe exports its own IFC of the write document with horizun_export.",
+  "IfcLinkSource": "",
+
+  "_Document": "Title of a model open in the Revit under test. Without it, links, quantities and the whole confirmation flow are NOT COVERED.",
+  "Document": "",
+
+  "_InactiveDocument": "Title of a SECOND model open in the SAME Revit but NOT active. It must really be open and really not active: the probe that used to pass a title matching nothing exercised the no-match path and proved nothing.",
+  "InactiveDocument": "",
+
+  "_SpfPath": "Full path to a real shared-parameter .txt file. Needed for the bind_shared_param rehearsal probe - a rehearsal that refuses because the file is missing proves nothing about whether it stops before the transaction.",
+  "SpfPath": "",
+
+  "_SpfParam": "The name of a definition inside that SPF.",
+  "SpfParam": "",
+
+  "_QuantityCategory": "A category that EXISTS in the model under test. quantities correctly refuses to report zero for an empty category, so a category from a different model leaves the probe unverified.",
+  "QuantityCategory": "OST_Floors",
+
+  "_OldFile": "Full path to a real .rvt or .rfa saved by a DIFFERENT Revit version, for the upgrade guard.",
+  "OldFile": "",
+
+  "_WriteDocument": [
+    "Title of a DISPOSABLE model open in the Revit under test, for the -WriteProbes tier.",
+    "",
+    "Every other probe in this harness is non-destructive: the write commands are exercised",
+    "through their refusals and dry runs. That is safe, and it is also why place_sprinklers,",
+    "connect_mep and terminate_riser reached review with their apply paths never once executed.",
+    "Refusals prove the guards. Only a commit proves the command.",
+    "",
+    "So this tier COMMITS. It needs a model nobody minds it writing into, and it never saves:",
+    "make a copy, mark the copy read-only on disk, open it, and name it here. A workshared",
+    "central should be opened DETACHED so nothing can reach the central.",
+    "",
+    "The probes find their own targets by querying the model (pipe types, system types, a level,",
+    "a sprinkler symbol, a vertical pipe), so this is one title rather than a dozen element ids",
+    "that would go stale on the next save."
+  ],
+  "WriteDocument": "",
+
+  "_WriteDocumentDisposable": [
+    "Must be exactly 'yes-this-model-is-disposable'. Anything else, including blank, makes every",
+    "write probe NOT COVERED and nothing is written.",
+    "",
+    "A second, deliberate opt-in on top of -WriteProbes: the switch says what kind of run this is,",
+    "this says the named model is really expendable. One flag is easy to pass by habit; the point",
+    "of two is that the model is named in the same breath as the permission to write into it."
+  ],
+  "WriteDocumentDisposable": "",
+
+  "_VoidFamilyDocument": [
+    "Title of a FAMILY document, open in the Revit under test, containing at least one VOID form",
+    "that cuts a solid. For the family_mirror_void write probe.",
+    "",
+    "A void earns its keep by cutting. The four properties that command verifies - present, still",
+    "a void, cuts the same number of solids as its source, landed where the reflection puts it -",
+    "cannot be checked against a family that has no void, and a family with only solids exercises",
+    "just the refusal. Four families on this machine were checked and none had one.",
+    "",
+    "It takes two minutes to make: new family from any template, one extrusion, a second extrusion",
+    "set to Void that overlaps it, Cut Geometry, save as its own .rfa, open it, name it here."
+  ],
+  "VoidFamilyDocument": "",
+
+  "_ClosedWorksetDocument": [
+    "Title of a local WORKSHARED fixture model. It may already be open: the harness copies its saved file",
+    "to a disposable temporary path and opens that copy with ClosedWorksetName kept closed.",
+    "",
+    "This is the one condition in the product that cannot be detected from inside the answer it",
+    "corrupts. A closed workset's elements are not in the document, so a scan does not skip them -",
+    "it never sees them - and every count comes back smaller with nothing anywhere reporting a gap.",
+    "'0 imported CAD instances' over a half-loaded model is a true statement about what was loaded,",
+    "presented as a statement about the building.",
+    "",
+    "It cannot be simulated either: whether a workset is open is a property of how the model was",
+    "opened. Any local workshared fixture will do; it does not have to be the same one as Document.",
+    "",
+    "A COPY OF A CENTRAL IS STILL A CENTRAL. Measured 2026-09-03 on Revit 2026: a file copied from a",
+    "central and named ..._L is refused by the typed open as a central, and opening it with",
+    "detach=true renames the document to '<title>_detached' - so the title a scan must be given is",
+    "NOT the one in ClosedWorksetDocument. Declare that title in ClosedWorksetDetachedTitle when the",
+    "fixture is a detached copy; leave it empty when the fixture is a real local."
+  ],
+  "ClosedWorksetDocument": "",
+  "_ClosedWorksetName": "Exact user-workset name the typed open must keep closed.",
+  "ClosedWorksetName": "",
+  "_ClosedWorksetDetachedTitle": [
+    "The title the document ends up with when the fixture is opened detached, when that differs",
+    "from ClosedWorksetDocument. Empty for a real local. This exists because the difference is",
+    "invisible until a scan is refused for naming the wrong active document."
+  ],
+  "ClosedWorksetDetachedTitle": ""
+}

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="vi"><head>
+<!-- design: macrostructure=CAD-workbench theme=paper-workspace -->
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Cùng U-C4N đọc tài liệu, trao đổi phương án và thực hiện bản vẽ AutoCAD.">
+<title>Trao đổi · U-C4N Workspace</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('uc4n-theme')||'light'}catch{document.documentElement.dataset.theme='light'}</script>
+<link rel="icon" href="/assets/brand.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/workspace.css">
+</head><body>
+<a href="#main" class="skip-link">Đến nội dung chính</a>
+<header class="topbar">
+<a class="brand" href="/chat" aria-label="U-C4N — Trang trao đổi"><span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M10 29V11h20M16 29h14V17M8 33L33 8" stroke="currentColor" stroke-width="2"/></svg></span><span><span class="brand-name">U-C4N</span><small>AutoCAD workspace</small></span></a>
+<nav aria-label="Không gian làm việc"><a class="nav-link" href="/chat" aria-current="page">Trao đổi</a><a class="nav-link" href="/" >Công cụ</a></nav>
+<button class="theme-toggle" type="button" data-theme-toggle aria-label="Đổi giao diện sáng tối"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z" stroke="currentColor" stroke-width="1.5"/></svg></button>
+</header>
+<main class="workspace" id="main">
+<div class="page-heading"><div><p class="eyebrow">Không gian trao đổi</p><h1>Từ ý tưởng đến bản vẽ.</h1><p>Trao đổi để làm rõ yêu cầu. Chốt phương án khi bạn sẵn sàng.</p></div><span class="quiet-label">Bạn duyệt trước khi thực hiện</span></div>
+<div class="chat-layout"><div class="chat-column">
+<section class="conversation" aria-label="Trao đổi với trợ lý CAD">
+<div class="conversation-bar"><strong>Cuộc trao đổi của bạn</strong><button class="tertiary" id="newChat" type="button">+ Trao đổi mới</button></div>
+<div id="messages" class="chat" role="log" aria-label="Lịch sử trao đổi" aria-live="polite">
+<div class="welcome"><div class="welcome-symbol"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M10 29V11h20M16 29h14V17M8 33L33 8" stroke="currentColor" stroke-width="2"/></svg></div><h2>Bạn muốn dựng gì hôm nay?</h2><p>Mô tả ý tưởng hoặc đính kèm tài liệu. Mình sẽ cùng bạn làm rõ kích thước, bố trí và các bước thực hiện trên AutoCAD.</p>
+<div class="suggestions"><button data-suggestion="Đọc bản vẽ hiện tại và cho mình biết các thông tin chính.">Đọc bản vẽ hiện tại</button><button data-suggestion="Mình muốn dựng bản vẽ từ tài liệu đính kèm. Hãy đọc và hỏi lại những chi tiết còn thiếu.">Dựng từ tài liệu</button></div></div>
+</div>
+<div class="composer"><label for="message">Yêu cầu của bạn</label><textarea id="message" rows="3" placeholder="Mô tả điều bạn muốn làm với bản vẽ…"></textarea>
+<div class="composer-footer"><div class="compose-actions"><label class="file-trigger" for="file"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8 13 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9a7 7 0 0 1 10 10l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>Đính kèm<input class="visually-hidden" id="file" type="file" accept=".txt,.md,.json,.csv,.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp"></label><span class="muted keyboard-hint">Shift + Enter để xuống dòng</span></div><button class="primary send-button" id="send">Gửi tin nhắn <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+<div class="file-strip"><span id="fileInfo" class="muted">Tài liệu, PDF hoặc ảnh · Tối đa 20 MB</span><button id="clearFile" class="tertiary" hidden>Bỏ file</button></div>
+<div id="notice" class="muted" role="status" aria-live="polite"></div>
+</div></section>
+<section id="proposalCard" class="card hidden"><div class="section-intro"><p class="eyebrow">Chờ bạn duyệt</p><h2>Phương án thực hiện</h2><p id="summary"></p></div><div id="steps"></div><label class="approve"><input id="confirm" type="checkbox">Tôi đã xem các bước và chọn đúng bản vẽ cần thao tác.</label><button class="primary" id="execute" disabled>Chốt phương án & xử lý</button></section>
+<section id="resultCard" class="card hidden"><div class="section-intro"><p class="eyebrow">Sau thực hiện</p><h2>Kết quả xử lý</h2></div><div id="result"></div></section>
+</div>
+<aside class="chat-sidebar" aria-label="Kết nối và hướng dẫn">
+<section class="side-panel"><div class="panel-heading"><h2>Kết nối AutoCAD</h2></div><span id="connection" class="status">Chưa kết nối</span><p class="muted">Mở bản vẽ trong AutoCAD, sau đó kết nối để bắt đầu.</p>
+<details data-connection-settings><summary>Cấu hình kết nối</summary><label for="token">Token client</label><input id="token" type="password" autocomplete="off" placeholder="Nhập token client"><p class="connection-help">Lấy token tại UC4NAutoCADMCPClient/data/operator-token.txt</p><label for="endpoint">Địa chỉ MCP server</label><input id="endpoint" type="url" value="http://127.0.0.1:8768/mcp"><label for="mcpToken">Bearer token MCP (nếu có)</label><input id="mcpToken" type="password" autocomplete="off"></details>
+<div class="actions"><button class="primary" id="connect">Kết nối MCP</button><button class="tertiary" id="reconnect">Kết nối lại AutoCAD</button></div></section>
+<section class="side-panel workflow-panel"><h2>Cùng làm từng bước</h2><ol class="workflow"><li><strong>Chia sẻ yêu cầu</strong>Nhắn tin hoặc gửi tài liệu bạn đang có.</li><li><strong>Hoàn thiện phương án</strong>Trao đổi thêm để chọn cách thực hiện.</li><li><strong>Chốt và xử lý</strong>Xem các bước, duyệt rồi theo dõi kết quả.</li></ol></section>
+<p class="sidebar-note">Cần đổi MCP server, agent hoặc model? <a href="/settings">Mở cài đặt →</a></p>
+</aside></div></main>
+<script>
+const $=id=>document.getElementById(id);let jobId=null,proposal=null,busy=false;
+for(const id of ['token','endpoint','mcpToken']){const saved=sessionStorage.getItem('uc4n-'+id);if(saved!==null)$(id).value=saved;$(id).addEventListener('change',()=>sessionStorage.setItem('uc4n-'+id,$(id).value))}
+function note(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'muted'}
+async function api(path,body){const form=body instanceof FormData;const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+$('token').value,...(body===undefined||form?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:(form?body:JSON.stringify(body))});let data={};try{data=await response.json()}catch{}if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail||response.statusText));return data}
+function append(role,text){const b=document.createElement('div');b.className='bubble '+(role==='user'?'user':'assistant');b.textContent=text;$('messages').append(b);$('messages').scrollTop=$('messages').scrollHeight}
+function setBusy(value){busy=value;for(const id of ['send','connect','reconnect','newChat','message','file','clearFile'])$(id).disabled=value;document.querySelector('.conversation').setAttribute('aria-busy',String(value));document.querySelectorAll('[data-suggestion]').forEach(button=>button.disabled=value);$('execute').disabled=value||!proposal||!$('confirm').checked;}
+async function runButton(id,fn){if(busy)return;setBusy(true);note('Đang xử lý…');try{await fn();note('')}catch(e){note(e.message,true)}finally{setBusy(false)}}
+function setProposal(p){proposal=p&&p.decision==='plan'&&p.id?p:null;$('proposalCard').classList.toggle('hidden',!proposal);$('confirm').checked=false;$('execute').disabled=true;if(!proposal)return;$('summary').textContent=proposal.summary||'Phương án CAD';$('steps').replaceChildren();for(const [i,step]of proposal.steps.entries()){const box=document.createElement('div');box.className='proposal-step';const title=document.createElement('strong');title.textContent=`Bước ${i+1}`;const why=document.createElement('p');why.textContent=step.explanation||step.tool;const details=document.createElement('details');const caption=document.createElement('summary');caption.textContent='Thông số thao tác · '+step.tool;const args=document.createElement('pre');args.textContent=JSON.stringify(step.arguments||{},null,2);details.append(caption,args);box.append(title,why,details);$('steps').append(box)}}
+function renderMessages(items){$('messages').replaceChildren();for(const m of items||[])append(m.role,m.content)}
+function resultPayload(item){
+  const texts=(item.content||[]).filter(c=>c.type==='text').map(c=>c.text).filter(Boolean);
+  let data=item.data;
+  if(data===null||data===undefined){data=texts.map(text=>{try{return JSON.parse(text)}catch{return text}});if(data.length===1)data=data[0]}
+  if(typeof data==='string'){try{data=JSON.parse(data)}catch{}}
+  return data;
+}
+function resultFailed(item){const data=resultPayload(item);return Boolean(item.is_error||item.error||item.outcome_unknown||(data&&typeof data==='object'&&(data.ok===false||data.success===false||data.connected===false||data.error)));}
+const resultLabels={name:'Tên',full_path:'Đường dẫn bản vẽ',path:'Đường dẫn',file_path:'Đường dẫn file',saved:'Đã lưu',entity_count:'Số đối tượng',layer_count:'Số lớp',block_count:'Số block',units:'Đơn vị',version:'Phiên bản',backend:'Chế độ kết nối',connected:'Đã kết nối',active_document:'Bản vẽ hiện hành',open_documents:'Số bản vẽ đang mở',handle:'Mã đối tượng',handles:'Mã các đối tượng',layer:'Lớp',type:'Loại',count:'Số lượng',created:'Đã tạo',deleted:'Đã xóa',updated:'Đã cập nhật',message:'Thông báo',error:'Lỗi',warning:'Lưu ý',warnings:'Lưu ý',value:'Giá trị',variable:'Biến bản vẽ',area:'Diện tích',length:'Chiều dài',radius:'Bán kính',width:'Chiều rộng',height:'Chiều cao',position:'Vị trí',center:'Tâm',extents_min:'Giới hạn nhỏ nhất',extents_max:'Giới hạn lớn nhất',text:'Nội dung',result:'Kết quả',results:'Các kết quả',entities:'Đối tượng',success:'Thành công',ok:'Thành công'};
+function resultNode(tag,text,parent,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;parent.append(node);return node;}
+function readableData(value,parent,depth=0){
+  if(value===null||value===undefined)return;
+  if(typeof value!=='object'){resultNode('p',typeof value==='boolean'?(value?'Có':'Không'):String(value),parent);return}
+  if(depth>6){resultNode('p','Xem dữ liệu đầy đủ trong phần chi tiết kỹ thuật.',parent,'muted');return}
+  if(Array.isArray(value)){
+    if(!value.length){resultNode('p','Không có mục nào.',parent,'muted');return}
+    if(value.every(v=>v===null||typeof v!=='object')){resultNode('p',value.map(v=>v===null?'—':typeof v==='boolean'?(v?'Có':'Không'):String(v)).join(' · '),parent);return}
+    const list=resultNode('ol',undefined,parent);for(const entry of value.slice(0,30))readableData(entry,resultNode('li',undefined,list),depth+1);
+    if(value.length>30)resultNode('p',`Hiển thị 30/${value.length} mục. Xem phần chi tiết kỹ thuật để đọc đầy đủ.`,parent,'muted');return;
+  }
+  const fields=resultNode('dl',undefined,parent);
+  for(const [key,val]of Object.entries(value)){
+    if(val===null||val===undefined||key==='ok'||key==='success')continue;
+    resultNode('dt',resultLabels[key]||key.replaceAll('_',' '),fields,'muted');readableData(val,resultNode('dd',undefined,fields),depth+1);
+  }
+}
+function renderExecution(result,selected){
+  const target=$('result');target.replaceChildren();$('resultCard').classList.remove('hidden');
+  const items=result.results||[],unknown=items.some(i=>i.outcome_unknown),failed=items.some(resultFailed),ok=result.ok===true&&!failed;
+  resultNode('h3',unknown?'Chưa xác định được kết quả trong AutoCAD':ok?'Đã thực hiện các bước được duyệt':'Đã dừng xử lý',target);
+  if(unknown)resultNode('p','Kết nối bị gián đoạn khi đang xử lý. Một số thao tác có thể đã thực hiện; hãy kiểm tra bản vẽ trước khi chạy lại.',target,'error');
+  else resultNode('p',`${items.filter(i=>!resultFailed(i)).length}/${selected.steps.length} bước báo thành công.${ok?'':' Xem bước gặp lỗi bên dưới.'}`,target,ok?'muted':'error');
+  for(const [index,item]of items.entries()){
+    const box=resultNode('div',undefined,target,'proposal-step');const step=selected.steps[index]||{};
+    const state=item.outcome_unknown?'Chưa rõ kết quả':resultFailed(item)?'Có lỗi':'Đã thực hiện';
+    resultNode('strong',`Bước ${index+1} · ${state}`,box,resultFailed(item)?'error':'');
+    resultNode('p',step.explanation||item.tool||'Thao tác CAD',box);
+    if(item.error)resultNode('p',item.error,box,'error');
+    readableData(resultPayload(item),box);
+    for(const content of item.content||[])if(content.type==='image'&&['image/png','image/jpeg','image/webp'].includes(content.mimeType)){const img=resultNode('img',undefined,box);img.src=`data:${content.mimeType};base64,${content.data}`;img.alt=`Ảnh kết quả bước ${index+1}`;img.style.maxWidth='100%';}
+  }
+  if(items.length<selected.steps.length)resultNode('p',`${selected.steps.length-items.length} bước còn lại chưa được chạy.`,target,'muted');
+  const next=result.coordinator;
+  if(next){resultNode('h3','Đánh giá sau xử lý',target);if(next.summary)resultNode('p',next.summary,target);for(const q of next.questions||[])resultNode('p',q,target);if(next.error)resultNode('p',`Chưa đánh giá được kết quả: ${next.error}`,target,'error');if(next.decision==='plan')resultNode('p','Có phương án tiếp theo đang chờ bạn xem và duyệt.',target,'muted');}
+  const details=resultNode('details',undefined,target);resultNode('summary','Chi tiết kỹ thuật (dữ liệu gốc)',details);resultNode('pre',JSON.stringify(result,null,2),details);
+}
+$('connect').onclick=()=>runButton('connect',async()=>{let state=await api('status');if(!state.session)state=await api('connect',{endpoint:$('endpoint').value,mcp_token:$('mcpToken').value});$('connection').textContent=state.status.connected?`MCP đã kết nối · ${state.tool_count} công cụ`:'MCP chưa kết nối CAD';if(!state.status.connected)throw Error(JSON.stringify(state.status));if(jobId){try{const history=await api(`chat/${jobId}`);renderMessages(history.messages);setProposal(history.proposal)}catch{}}note('Đã kết nối. Mô tả yêu cầu để bắt đầu hoặc tiếp tục trao đổi.');});
+$('reconnect').onclick=()=>runButton('reconnect',async()=>{const state=await api('reconnect',{});$('connection').textContent=state.status.connected?`Đã kết nối lại ${state.status.backend}`:'Chưa kết nối AutoCAD';if(!state.status.connected)throw Error(JSON.stringify(state.status));});
+$('send').onclick=()=>runButton('send',async()=>{let message=$('message').value.trim();let attachmentId=null;if($('file').files[0]){const form=new FormData();form.append('file',$('file').files[0]);const file=await api('files',form);attachmentId=file.id;message=message||'Đọc file đính kèm và tư vấn phương án CAD phù hợp.'}if(!message&&!attachmentId)throw Error('Nhập tin nhắn hoặc chọn file đính kèm.');$('message').value='';const outcome=await api('chat',{message,job_id:jobId,attachment_id:attachmentId});jobId=outcome.job_id;sessionStorage.setItem('uc4n-chat-job',jobId);$('file').value='';$('fileInfo').textContent='Chưa chọn file.';renderMessages(outcome.messages);setProposal(outcome);$('resultCard').classList.add('hidden');});
+$('file').onchange=()=>{$('fileInfo').textContent=$('file').files[0]?`${$('file').files[0].name} · sẽ tải lên khi bạn gửi tin nhắn.`:'Chưa chọn file.'};
+$('clearFile').onclick=()=>{$('file').value='';$('fileInfo').textContent='Chưa chọn file.'};
+$('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('send').click()}};
+$('confirm').onchange=()=>{$('execute').disabled=!($('confirm').checked&&proposal)};
+$('execute').onclick=()=>runButton('execute',async()=>{if(!proposal||!$('confirm').checked)throw Error('Xác nhận đã xem phương án trước khi chạy.');const selected=proposal;setProposal(null);$('resultCard').classList.remove('hidden');$('result').textContent='Đang thực hiện phương án và đọc kết quả…';let result;try{result=await api(`plans/${selected.id}/execute`,{confirmed:true})}catch(e){$('result').replaceChildren();resultNode('h3','Chưa nhận được kết quả xử lý', $('result'));resultNode('p',e.message,$('result'),'error');resultNode('p','Nếu yêu cầu đã được gửi tới AutoCAD, hãy kiểm tra bản vẽ trước khi thực hiện lại.',$('result'),'muted');throw e}renderExecution(result,selected);if(result.coordinator){setProposal(result.coordinator);try{const history=await api(`chat/${jobId}`);renderMessages(history.messages)}catch{append('assistant',result.coordinator.summary||'Đã nhận kết quả các bước vừa duyệt.')}}else{setProposal(null);append('assistant',result.ok&&!result.results?.some(resultFailed)?'Đã nhận kết quả xử lý. Bạn có thể xem chi tiết từng bước bên dưới.':'Có bước báo lỗi; xem kết quả bên dưới để biết bước nào cần xử lý tiếp.')} });
+$('newChat').onclick=()=>{jobId=null;proposal=null;sessionStorage.removeItem('uc4n-chat-job');$('messages').replaceChildren();append('assistant','Cuộc trao đổi mới bắt đầu. Bạn muốn làm gì trên bản vẽ?');setProposal(null);$('resultCard').classList.add('hidden');$('file').value='';$('fileInfo').textContent='Chưa chọn file.';note('')};
+const saved=sessionStorage.getItem('uc4n-chat-job');if(saved)jobId=saved;
+</script>
+<script src="/assets/workspace.js"></script>
+</body></html>
